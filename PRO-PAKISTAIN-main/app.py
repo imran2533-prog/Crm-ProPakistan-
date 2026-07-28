@@ -371,6 +371,37 @@ def index():
     # Frontend handles redirection to login if session is missing.
     return render_template('index.html')
 
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    """Public health check - shows DB connection status for debugging."""
+    mongo_uri_set = bool(os.environ.get("MONGO_URI"))
+    mongo_uri_preview = ""
+    raw = os.environ.get("MONGO_URI", "")
+    if raw:
+        # Show only cluster part, hide credentials
+        try:
+            mongo_uri_preview = raw.split("@")[-1] if "@" in raw else "set but unparseable"
+        except:
+            mongo_uri_preview = "set"
+    
+    db_ok = False
+    db_error = ""
+    try:
+        if mongo is not None:
+            mongo.db.command("ping")
+            db_ok = True
+    except Exception as e:
+        db_error = str(e)
+    
+    return jsonify({
+        "status": "ok" if db_ok else "error",
+        "mongo_uri_set": mongo_uri_set,
+        "mongo_cluster": mongo_uri_preview,
+        "db_connected": db_ok,
+        "db_error": db_error,
+        "python_env": os.environ.get("RENDER", "not-render")
+    })
+
 @app.route('/api/auth/login', methods=['POST'])
 @limiter.limit("5 per minute")
 def login():
