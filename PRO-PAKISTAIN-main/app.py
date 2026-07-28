@@ -23,7 +23,8 @@ load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
-Talisman(app, content_security_policy=None)  # CSP disabled for now to avoid breaking SPA scripts, can be hardened later
+# Talisman disabled — causes recursion errors with eventlet on Render
+# Talisman(app, content_security_policy=None)
 limiter = Limiter(
     get_remote_address,
     app=app,
