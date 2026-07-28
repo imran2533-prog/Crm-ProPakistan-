@@ -38,24 +38,20 @@ limiter = Limiter(
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet", manage_session=True)
 
 # --- CONFIGURATION ---
-mongo_uri = os.environ.get("MONGO_URI")
+mongo_uri = os.environ.get("MONGO_URI", "").strip().strip('\n').strip('\r').strip()
 if mongo_uri:
-    mongo_uri = mongo_uri.strip()
     # Handle accidental label inclusion (e.g., "MONGO_URI: mongodb+srv://...")
     if mongo_uri.lower().startswith("mongo_uri:"):
         mongo_uri = mongo_uri[10:].strip()
-    elif mongo_uri.lower().startswith("mongodb:"):
-        # This is already a valid scheme, skip
-        pass
     elif ":" in mongo_uri and not mongo_uri.startswith("mongodb"):
-        # If there's a colon but it doesn't look like a scheme, it might be a label we missed
         parts = mongo_uri.split(":", 1)
         if len(parts) > 1 and "mongodb" in parts[1].lower():
             mongo_uri = parts[1].strip()
 else:
-    # Fallback for local dev if .env is missing, but Render will need this set
     print("WARNING: MONGO_URI environment variable is not set. Database connection will fail.")
-    mongo_uri = "mongodb://localhost:27017/hospital_management" 
+    mongo_uri = "mongodb://localhost:27017/hospital_management"
+
+print(f"INFO: Using MongoDB cluster: {mongo_uri.split('@')[-1] if '@' in mongo_uri else 'local'}")
 app.config["MONGO_URI"] = mongo_uri
 
 secret_key = os.environ.get("SECRET_KEY", "06e4b4738ab81f94277a7216b5e79fb24b339f28a6a131391d8d6f8f0a295dc1")
@@ -374,31 +370,26 @@ def index():
 @app.route('/api/db-status', methods=['GET'])
 def db_status_check():
     """Public health check - shows DB connection status for debugging."""
-    mongo_uri_set = bool(os.environ.get("MONGO_URI"))
-    mongo_uri_preview = ""
-    raw = os.environ.get("MONGO_URI", "")
-    if raw:
-        try:
-            mongo_uri_preview = raw.split("@")[-1] if "@" in raw else "set but unparseable"
-        except:
-            mongo_uri_preview = "set"
-    
+    mongo_uri_set = bool(os.environ.get("MONGO_URI", "").strip())
+    raw = os.environ.get("MONGO_URI", "").strip()
+    mongo_uri_preview = raw.split("@")[-1] if "@" in raw else ("set" if raw else "not set")
+
     db_ok = False
     db_error = ""
     try:
         if mongo is not None:
-            mongo.db.command("ping")
+            # Simple test — list collection names
+            names = mongo.db.list_collection_names()
             db_ok = True
     except Exception as e:
-        db_error = str(e)
-    
+        db_error = str(e)[:200]
+
     return jsonify({
         "status": "ok" if db_ok else "error",
         "mongo_uri_set": mongo_uri_set,
         "mongo_cluster": mongo_uri_preview,
         "db_connected": db_ok,
         "db_error": db_error,
-        "python_env": os.environ.get("RENDER", "not-render")
     })
 
 @app.route('/api/auth/login', methods=['POST'])
