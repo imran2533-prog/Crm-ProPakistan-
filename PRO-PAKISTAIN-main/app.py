@@ -371,14 +371,13 @@ def index():
     # Frontend handles redirection to login if session is missing.
     return render_template('index.html')
 
-@app.route('/api/health', methods=['GET'])
-def health_check():
+@app.route('/api/db-status', methods=['GET'])
+def db_status_check():
     """Public health check - shows DB connection status for debugging."""
     mongo_uri_set = bool(os.environ.get("MONGO_URI"))
     mongo_uri_preview = ""
     raw = os.environ.get("MONGO_URI", "")
     if raw:
-        # Show only cluster part, hide credentials
         try:
             mongo_uri_preview = raw.split("@")[-1] if "@" in raw else "set but unparseable"
         except:
