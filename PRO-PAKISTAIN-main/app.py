@@ -370,19 +370,22 @@ def index():
 @app.route('/api/db-status', methods=['GET'])
 def db_status_check():
     """Public health check - shows DB connection status for debugging."""
-    mongo_uri_set = bool(os.environ.get("MONGO_URI", "").strip())
     raw = os.environ.get("MONGO_URI", "").strip()
+    mongo_uri_set = bool(raw)
     mongo_uri_preview = raw.split("@")[-1] if "@" in raw else ("set" if raw else "not set")
 
     db_ok = False
     db_error = ""
     try:
-        if mongo is not None:
-            # Simple test — list collection names
-            names = mongo.db.list_collection_names()
-            db_ok = True
+        # Use a fresh direct pymongo client — avoids Flask-PyMongo/Talisman recursion
+        import certifi as _certifi
+        from pymongo import MongoClient as _MC
+        _c = _MC(raw, tlsCAFile=_certifi.where(), serverSelectionTimeoutMS=5000)
+        _c.admin.command("ping")
+        _c.close()
+        db_ok = True
     except Exception as e:
-        db_error = str(e)[:200]
+        db_error = str(e)[:300]
 
     return jsonify({
         "status": "ok" if db_ok else "error",
