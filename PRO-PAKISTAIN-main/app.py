@@ -36,7 +36,7 @@ limiter = Limiter(
 # NOTE: Requires a single worker process (see render.yaml: `-w 1`) since rooms
 # are tracked in-memory. For multi-instance scaling, a message_queue (e.g. Redis)
 # would need to be configured here.
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet", manage_session=True)
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading", manage_session=True)
 
 # --- CONFIGURATION ---
 mongo_uri = os.environ.get("MONGO_URI", "").strip().strip('\n').strip('\r').strip()

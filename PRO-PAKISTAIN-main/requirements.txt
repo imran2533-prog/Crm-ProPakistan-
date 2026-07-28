@@ -14,5 +14,4 @@ Flask-CORS
 certifi
 Flask-SocketIO
 python-socketio
-eventlet
 APScheduler
