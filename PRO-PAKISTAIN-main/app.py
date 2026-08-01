@@ -363,6 +363,14 @@ def calculate_prorated_fee(monthly_fee, days_elapsed):
 #    - All financial fields stored as strings with commas, parsed as integers
 # ============================================================
 
+@app.route('/.well-known/assetlinks.json', methods=['GET'])
+def assetlinks():
+    """Serve Digital Asset Links file for TWA verification."""
+    return send_file(
+        os.path.join(app.static_folder, '.well-known', 'assetlinks.json'),
+        mimetype='application/json'
+    )
+
 @app.route('/')
 def index():
     # Frontend handles redirection to login if session is missing.
