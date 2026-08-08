@@ -2626,11 +2626,7 @@
       if (viewId === 'daily-report-view') {
         const datePicker = document.getElementById('report-date-picker');
         if (datePicker && !datePicker.value) {
-          const today = new Date();
-          const localIso = new Date(today.getTime() - today.getTimezoneOffset() * 60000)
-            .toISOString()
-            .split('T')[0];
-          datePicker.value = localIso;
+          datePicker.value = localDateISO();
         }
         loadDailyReport();
       }
@@ -3190,6 +3186,16 @@
         d = new Date(dateString);
       }
       return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+
+    // Returns today's date in YYYY-MM-DD using LOCAL timezone (not UTC)
+    // Fixes bug where after 7PM Pakistan time, UTC date becomes next day
+    function localDateISO(date) {
+      const d = date || new Date();
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      return `${yyyy}-${mm}-${dd}`;
     }
 
     window.openAdmissionsModal = async function () {
@@ -7306,7 +7312,7 @@
 
       // Send to Backend
       const datePicker = document.getElementById('report-date-picker');
-      const date = datePicker ? datePicker.value : new Date().toISOString().split('T')[0];
+      const date = (datePicker && datePicker.value) ? datePicker.value : localDateISO();
 
       try {
         await fetch('/api/reports/update', {
