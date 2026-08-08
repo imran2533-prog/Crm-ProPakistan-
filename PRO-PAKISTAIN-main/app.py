@@ -555,19 +555,6 @@ def get_notifications():
     except Exception as e:
         print(f"Get notifications error: {e}")
         return jsonify([])
-            notifs.append({
-                '_id': str(n['_id']),
-                'title': n.get('title'),
-                'message': n.get('message'),
-                'type': n.get('type', 'info'),
-                'meta': n.get('meta', {}),
-                'created_at': (n['created_at'].isoformat() + 'Z') if isinstance(n.get('created_at'), datetime) else n.get('created_at'),
-                'is_read': user_id in n.get('read_by', []),
-            })
-        return jsonify(notifs)
-    except Exception as e:
-        print(f"Get notifications error: {e}")
-        return jsonify([])
 
 # --- DEBUG: Show ALL notifications in DB (remove after testing) ---
 @app.route('/api/debug/notifications', methods=['GET'])
