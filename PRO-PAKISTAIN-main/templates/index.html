@@ -7446,16 +7446,7 @@
 
       const fragment = document.createDocumentFragment();
 
-      // Logic to show "All on track" message or toggle button
-      if (flaggedRows.length === 0 && normalRows.length > 0) {
-        const infoRow = document.createElement('tr');
-        infoRow.innerHTML = `<td colspan="${columns.length + 1
-          }" class="px-4 py-4 text-center text-sm text-teal-800 bg-teal-50 font-semibold">All patients are currently on track.</td>`;
-        fragment.appendChild(infoRow);
-      }
-
-      flaggedRows.forEach((row) => fragment.appendChild(row));
-
+      // Toggle button ALWAYS at top
       if (normalRows.length > 0) {
         const toggleRow = document.createElement('tr');
         const toggleCell = document.createElement('td');
@@ -7474,9 +7465,21 @@
         toggleCell.appendChild(toggleBtn);
         toggleRow.appendChild(toggleCell);
         fragment.appendChild(toggleRow);
-
-        normalRows.forEach((row) => fragment.appendChild(row));
       }
+
+      // All on track message (only when no flagged rows)
+      if (flaggedRows.length === 0 && normalRows.length > 0) {
+        const infoRow = document.createElement('tr');
+        infoRow.innerHTML = `<td colspan="${columns.length + 1
+          }" class="px-4 py-4 text-center text-sm text-teal-800 bg-teal-50 font-semibold">All patients are currently on track.</td>`;
+        fragment.appendChild(infoRow);
+      }
+
+      // Normal rows (on-track patients)
+      normalRows.forEach((row) => fragment.appendChild(row));
+
+      // Flagged rows (off-track) always visible at bottom
+      flaggedRows.forEach((row) => fragment.appendChild(row));
 
       if (flaggedRows.length === 0 && normalRows.length === 0) {
         const emptyRow = document.createElement('tr');
