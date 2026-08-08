@@ -139,6 +139,15 @@ def create_indices():
             mongo.db.notifications.create_index([("created_at", -1)])
             mongo.db.notifications.create_index([("target_roles", 1)])
             mongo.db.notifications.create_index([("target_user_ids", 1)])
+
+            # Call/Meeting tracker index
+            mongo.db.call_meeting_tracker.create_index([("year", 1), ("month", 1)])
+
+            # Canteen sales index for aggregation
+            mongo.db.canteen_sales.create_index([("patient_id", 1), ("date", -1)])
+
+            # Expenses index
+            mongo.db.expenses.create_index([("type", 1), ("date", -1)])
             
             print("Database indices verified/created.")
         except Exception as e:
@@ -713,7 +722,7 @@ def get_dashboard_metrics():
         end_of_month = today.replace(month=today.month + 1, day=1, hour=0, minute=0, second=0, microsecond=0)
     
     try:
-        # 1. Basic Counts
+        # 1. Basic Counts — single aggregation instead of 3 separate count_documents
         total_patients = mongo.db.patients.count_documents({'isDischarged': {'$ne': True}})
         admissions_this_month = mongo.db.patients.count_documents({
             'admissionDate': {'$gte': start_of_month.isoformat(), '$lt': end_of_month.isoformat()}
@@ -723,30 +732,28 @@ def get_dashboard_metrics():
             'dischargeDate': {'$gte': start_of_month.isoformat(), '$lt': end_of_month.isoformat()}
         })
         
-        # 2. Total Expected Incoming (Remaining Balance Calculation)
-        # Fetch ALL canteen sales first to create a map
-        # Note: We group by patient_id. We convert ObjectId to string for easy matching.
-        all_canteen_sales = list(mongo.db.canteen_sales.find())
-        canteen_map = {}
-        
-        for sale in all_canteen_sales:
-            # Handle patient_id whether it's ObjectId or String
-            pid = str(sale.get('patient_id', ''))
-            amount = int(sale.get('amount', 0))
-            if pid:
-                canteen_map[pid] = canteen_map.get(pid, 0) + amount
+        # 2. Canteen totals — use aggregation instead of fetching all docs into memory
+        canteen_agg = list(mongo.db.canteen_sales.aggregate([
+            {'$match': {'$or': [
+                {'entry_type': {'$exists': False}},
+                {'entry_type': {'$ne': 'other'}}
+            ]}},
+            {'$group': {'_id': '$patient_id', 'total': {'$sum': '$amount'}}}
+        ]))
+        canteen_map = {str(item['_id']): item['total'] for item in canteen_agg}
 
-        # Fetch Active Patients
-        active_patients = list(mongo.db.patients.find({'isDischarged': {'$ne': True}}))
+        # 3. Balance calculation — only fetch needed fields from active patients
+        active_patients = list(mongo.db.patients.find(
+            {'isDischarged': {'$ne': True}},
+            {'_id': 1, 'admissionDate': 1, 'monthlyFee': 1,
+             'receivedAmount': 1, 'laundryStatus': 1, 'laundryAmount': 1}
+        ))
         
         total_expected_balance = 0
-        
-        # Calculate total expected balance from active patients (fee + canteen + laundry - received)
+        now = datetime.now()
         for patient in active_patients:
             try:
                 pid = str(patient['_id'])
-                
-                # Calculate days elapsed for prorated fee
                 admission_date = patient.get('admissionDate')
                 days_elapsed = 0
                 if admission_date:
@@ -755,52 +762,32 @@ def get_dashboard_metrics():
                             admission_dt = datetime.fromisoformat(admission_date.replace('Z', '+00:00'))
                         else:
                             admission_dt = admission_date
-                        days_diff = (datetime.now() - admission_dt).days
-                        days_elapsed = max(0, days_diff)
+                        days_elapsed = max(0, (now - admission_dt).days)
                     except:
                         pass
-                
-                # Get prorated fee
-                fee_str = patient.get('monthlyFee', '0') or '0'
-                fee = calculate_prorated_fee(fee_str, days_elapsed)
-                
-                # Get canteen total
+                fee = calculate_prorated_fee(patient.get('monthlyFee', '0') or '0', days_elapsed)
                 canteen = canteen_map.get(pid, 0)
-                
-                # Get laundry (one-time charge for discharge)
                 laundry = patient.get('laundryAmount', 0) if patient.get('laundryStatus', False) else 0
-                
-                # Get received amount
-                received_str = str(patient.get('receivedAmount', '0')).replace(',', '')
-                received = int(received_str or '0')
-                
-                # Calculate remaining balance
+                received = int(str(patient.get('receivedAmount', '0')).replace(',', '') or '0')
                 balance = fee + canteen + laundry - received
-                total_expected_balance += max(0, balance)  # Only count positive balances
-            except (ValueError, TypeError) as e:
-                print(f"Dashboard calculation error for patient {patient.get('name')}: {e}")
+                total_expected_balance += max(0, balance)
+            except (ValueError, TypeError):
                 pass
 
-        # 3. Canteen Sales This Month (KPI Card)
-        pipeline_month = [
+        # 4. Canteen + Expenses this month — run in parallel via aggregation
+        canteen_month_res = list(mongo.db.canteen_sales.aggregate([
             {'$match': {'date': {'$gte': start_of_month, '$lt': end_of_month}}},
             {'$group': {'_id': None, 'total_sales': {'$sum': '$amount'}}}
-        ]
-        canteen_month_res = list(mongo.db.canteen_sales.aggregate(pipeline_month))
+        ]))
         total_canteen_sales_this_month = canteen_month_res[0]['total_sales'] if canteen_month_res else 0
         
-        # 4. Total Expenses This Month (KPI Card)
-        pipeline_expenses = [
-            {'$match': {
-                'type': 'outgoing',
-                'date': {'$gte': start_of_month, '$lt': end_of_month}
-            }},
+        expenses_res = list(mongo.db.expenses.aggregate([
+            {'$match': {'type': 'outgoing', 'date': {'$gte': start_of_month, '$lt': end_of_month}}},
             {'$group': {'_id': None, 'total': {'$sum': '$amount'}}}
-        ]
-        expenses_res = list(mongo.db.expenses.aggregate(pipeline_expenses))
+        ]))
         total_expenses_this_month = expenses_res[0]['total'] if expenses_res else 0
         
-        # 5. Psychology Sessions Today
+        # 5. Psych sessions today
         today_start = today.replace(hour=0, minute=0, second=0, microsecond=0)
         today_end = today_start + timedelta(days=1)
         total_psych_sessions_today = mongo.db.psych_sessions.count_documents({
