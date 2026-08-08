@@ -3192,6 +3192,16 @@
       return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
     }
 
+    // Returns today's date in YYYY-MM-DD using LOCAL timezone (not UTC)
+    // Fixes: after 7PM Pakistan time, UTC becomes next day causing data to save on wrong date
+    function localDateISO(date) {
+      const d = date || new Date();
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      return `${yyyy}-${mm}-${dd}`;
+    }
+
     window.openAdmissionsModal = async function () {
       try {
         const res = await fetch('/api/dashboard/admissions');
@@ -7280,22 +7290,18 @@
 
       // Determine which cycle to use based on report type
       if (reportType === 'night') {
-        // Night report cycle: Empty -> Done -> Not Done -> Med -> W -> Empty
         if (currentStatus === 'done') nextStatus = 'not_done';
         else if (currentStatus === 'not_done') nextStatus = 'med';
         else if (currentStatus === 'med') nextStatus = 'wc';
         else if (currentStatus === 'wc') nextStatus = '';
       } else {
-        // Day report cycle: Empty -> Done -> Not Done -> Complaint -> Empty
         if (currentStatus === 'done') nextStatus = 'not_done';
         else if (currentStatus === 'not_done') nextStatus = 'complaint';
         else if (currentStatus === 'complaint') nextStatus = '';
       }
 
       // Optimistic UI Update
-      btnElement.className = `w-full h-6 rounded flex items-center justify-center transition-all text-xs ${getStatusClass(
-        nextStatus
-      )}`;
+      btnElement.className = `w-full h-6 rounded flex items-center justify-center transition-all text-xs ${getStatusClass(nextStatus)}`;
       btnElement.innerHTML = getStatusIcon(nextStatus);
       btnElement.dataset.status = nextStatus || '';
       btnElement.setAttribute('aria-label', statusLabelMap[nextStatus] || 'No Status');
@@ -7304,24 +7310,54 @@
         `cycleReportStatus(this, '${patientId}', '${timeSlot}', '${nextStatus}', '${reportType}')`
       );
 
-      // Send to Backend
+      // Use LOCAL date (not UTC) — fixes data disappearing after 7PM PKT
       const datePicker = document.getElementById('report-date-picker');
-      const date = datePicker ? datePicker.value : new Date().toISOString().split('T')[0];
+      const date = (datePicker && datePicker.value) ? datePicker.value : localDateISO();
 
-      try {
-        await fetch('/api/reports/update', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            date: date,
-            patient_id: patientId,
-            time_slot: timeSlot,
-            status: nextStatus,
-          }),
-        });
-      } catch (e) {
-        console.error('Network error updating status', e);
-      }
+      // Save to backend with retry on failure
+      const saveData = async (retryCount = 0) => {
+        try {
+          const res = await fetch('/api/reports/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              date: date,
+              patient_id: patientId,
+              time_slot: timeSlot,
+              status: nextStatus,
+            }),
+          });
+
+          if (!res.ok) {
+            // Rate limit — retry after delay
+            if (res.status === 429 && retryCount < 3) {
+              setTimeout(() => saveData(retryCount + 1), 1500 * (retryCount + 1));
+              return;
+            }
+            // Other error — revert UI and show error
+            console.error('Save failed:', res.status);
+            btnElement.className = `w-full h-6 rounded flex items-center justify-center transition-all text-xs ${getStatusClass(currentStatus)}`;
+            btnElement.innerHTML = getStatusIcon(currentStatus);
+            btnElement.dataset.status = currentStatus || '';
+            btnElement.setAttribute('onclick', `cycleReportStatus(this, '${patientId}', '${timeSlot}', '${currentStatus}', '${reportType}')`);
+            if (typeof showSuccessModal === 'function') showSuccessModal('Failed to save. Please try again.', true);
+          }
+        } catch (e) {
+          // Network error — retry up to 3 times
+          if (retryCount < 3) {
+            setTimeout(() => saveData(retryCount + 1), 2000 * (retryCount + 1));
+          } else {
+            console.error('Network error after retries:', e);
+            // Revert UI on final failure
+            btnElement.className = `w-full h-6 rounded flex items-center justify-center transition-all text-xs ${getStatusClass(currentStatus)}`;
+            btnElement.innerHTML = getStatusIcon(currentStatus);
+            btnElement.dataset.status = currentStatus || '';
+            btnElement.setAttribute('onclick', `cycleReportStatus(this, '${patientId}', '${timeSlot}', '${currentStatus}', '${reportType}')`);
+          }
+        }
+      };
+
+      await saveData();
     };
 
     const statusLabelMap = {
