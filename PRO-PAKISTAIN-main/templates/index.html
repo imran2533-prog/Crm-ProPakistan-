@@ -1908,8 +1908,8 @@
     let totalSalaries = 0;
     let totalBills = 0;
     window.reportTableState = window.reportTableState || {
-      day: { showAll: true },
-      night: { showAll: true },
+      day: { showAll: false },
+      night: { showAll: false },
     };
 
     const formatCurrency = (amount) =>
@@ -7394,7 +7394,7 @@
       }
 
       if (!window.reportTableState[type]) {
-        window.reportTableState[type] = { showAll: true };
+        window.reportTableState[type] = { showAll: false };
       }
       const showAllNormal = window.reportTableState[type].showAll;
       const flaggedRows = [];
@@ -7451,6 +7451,14 @@
       });
 
       const fragment = document.createDocumentFragment();
+
+      // Logic to show "All on track" message or toggle button
+      if (flaggedRows.length === 0 && normalRows.length > 0) {
+        const infoRow = document.createElement('tr');
+        infoRow.innerHTML = `<td colspan="${columns.length + 1
+          }" class="px-4 py-4 text-center text-sm text-teal-800 bg-teal-50 font-semibold">All patients are currently on track.</td>`;
+        fragment.appendChild(infoRow);
+      }
 
       flaggedRows.forEach((row) => fragment.appendChild(row));
 
