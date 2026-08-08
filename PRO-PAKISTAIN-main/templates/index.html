@@ -27,10 +27,8 @@
   <link rel="manifest" href="/static/manifest.json">
   <!-- Tailwind — load async to unblock render -->
   <script src="https://cdn.tailwindcss.com" defer></script>
-  <!-- Font Awesome — preconnect + async -->
-  <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" media="print" onload="this.media='all'" />
-  <noscript><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/></noscript>
+  <!-- Font Awesome -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
   <!-- Socket.IO — defer, only needed after login -->
   <link rel="preconnect" href="https://cdn.socket.io" crossorigin>
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" defer></script>
@@ -4055,7 +4053,7 @@
           img.classList.remove('opacity-40');
           img.alt = 'Patient photo';
         } else {
-          img.src = 'https://via.placeholder.com/300x200?text=No+Photo';
+          img.src = 'data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'300\' height=\'200\'%3E%3Crect width=\'300\' height=\'200\' fill=\'%23e5e7eb\'/%3E%3Ctext x=\'50%25\' y=\'50%25\' dominant-baseline=\'middle\' text-anchor=\'middle\' fill=\'%239ca3af\' font-size=\'14\'%3ENo Photo%3C/text%3E%3C/svg%3E';
           img.classList.add('opacity-40');
           img.alt = 'No photo available';
         }
@@ -10876,7 +10874,7 @@
             <input type="hidden" id="new-patient-photo1-hidden" />
             <div class="mt-2 aspect-video rounded border bg-gray-50 overflow-hidden flex items-center justify-center">
               <img id="new-patient-photo1-preview" class="object-cover w-full h-full opacity-40"
-                src="https://via.placeholder.com/300x200?text=No+Photo" alt="No photo" />
+                src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='200'%3E%3Crect width='300' height='200' fill='%23e5e7eb'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='%239ca3af' font-size='14'%3ENo Photo%3C/text%3E%3C/svg%3E" alt="No photo" />
             </div>
           </div>
 
@@ -10886,7 +10884,7 @@
             <input type="hidden" id="new-patient-photo2-hidden" />
             <div class="mt-2 aspect-video rounded border bg-gray-50 overflow-hidden flex items-center justify-center">
               <img id="new-patient-photo2-preview" class="object-cover w-full h-full opacity-40"
-                src="https://via.placeholder.com/300x200?text=No+Photo" alt="No photo" />
+                src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='200'%3E%3Crect width='300' height='200' fill='%23e5e7eb'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='%239ca3af' font-size='14'%3ENo Photo%3C/text%3E%3C/svg%3E" alt="No photo" />
             </div>
           </div>
 
@@ -10896,7 +10894,7 @@
             <input type="hidden" id="new-patient-photo3-hidden" />
             <div class="mt-2 aspect-video rounded border bg-gray-50 overflow-hidden flex items-center justify-center">
               <img id="new-patient-photo3-preview" class="object-cover w-full h-full opacity-40"
-                src="https://via.placeholder.com/300x200?text=No+Photo" alt="No photo" />
+                src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='200'%3E%3Crect width='300' height='200' fill='%23e5e7eb'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='%239ca3af' font-size='14'%3ENo Photo%3C/text%3E%3C/svg%3E" alt="No photo" />
             </div>
           </div>
 

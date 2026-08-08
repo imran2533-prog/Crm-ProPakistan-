@@ -2282,7 +2282,7 @@ def pay_utility_bill(id):
 
 # --- TEAM / EMPLOYEE MANAGEMENT ROUTES ---
 @app.route('/api/employees', methods=['GET'])
-@role_required(['Admin'])
+@role_required(['Admin', 'General Staff'])
 def get_employees():
     if not check_db(): return jsonify({"error": "Database error"}), 500
     try:
