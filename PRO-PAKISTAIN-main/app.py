@@ -15,6 +15,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_talisman import Talisman
 from flask_cors import CORS
+from flask_compress import Compress
 import certifi
 from flask_socketio import SocketIO, emit, join_room
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -23,6 +24,7 @@ load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
+Compress(app)  # Gzip compression — reduces 518KB HTML to ~80KB
 # Talisman disabled — causes recursion errors with eventlet on Render
 # Talisman(app, content_security_policy=None)
 limiter = Limiter(
@@ -908,7 +910,12 @@ def get_month_admissions():
 def get_patients():
     if not check_db(): return jsonify([])
     try:
-        patients_cursor = mongo.db.patients.find()
+        # Exclude large base64 photo fields from list — load on demand
+        patients_cursor = mongo.db.patients.find({}, {
+            'photo1': 0,
+            'photo2': 0,
+            'photo3': 0,
+        })
         
         # Aggregate total canteen spending for all patients
         canteen_totals_agg = list(mongo.db.canteen_sales.aggregate([
@@ -926,17 +933,13 @@ def get_patients():
         for p in patients_cursor:
             patient_id = str(p['_id'])
             p['_id'] = patient_id
-            # Ensure monthlyFee is present for canteen view logic
             p['monthlyFee'] = p.get('monthlyFee', '0')
-            p['photo1'] = p.get('photo1', '')
-            p['photo2'] = p.get('photo2', '')
-            p['photo3'] = p.get('photo3', '')
+            p['photo1'] = ''
+            p['photo2'] = ''
+            p['photo3'] = ''
             p['isDischarged'] = p.get('isDischarged', False)
             p['dischargeDate'] = p.get('dischargeDate')
-            
-            # Include canteen spending as separate field
             p['canteenSpent'] = canteen_totals_map.get(patient_id, 0)
-            
             patients.append(p)
         return jsonify(patients)
     except Exception as e:

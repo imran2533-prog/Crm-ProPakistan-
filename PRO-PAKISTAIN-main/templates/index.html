@@ -25,9 +25,15 @@
 
   <!-- Manifest -->
   <link rel="manifest" href="/static/manifest.json">
-  <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
-  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <!-- Tailwind — load async to unblock render -->
+  <script src="https://cdn.tailwindcss.com" defer></script>
+  <!-- Font Awesome — preconnect + async -->
+  <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" media="print" onload="this.media='all'" />
+  <noscript><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/></noscript>
+  <!-- Socket.IO — defer, only needed after login -->
+  <link rel="preconnect" href="https://cdn.socket.io" crossorigin>
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" defer></script>
   <style>
     @keyframes fadeIn {
       from { opacity: 0; transform: translateY(-8px); }
