@@ -1908,8 +1908,8 @@
     let totalSalaries = 0;
     let totalBills = 0;
     window.reportTableState = window.reportTableState || {
-      day: { showAll: false },
-      night: { showAll: false },
+      day: { showAll: true },
+      night: { showAll: true },
     };
 
     const formatCurrency = (amount) =>
@@ -7394,7 +7394,7 @@
       }
 
       if (!window.reportTableState[type]) {
-        window.reportTableState[type] = { showAll: false };
+        window.reportTableState[type] = { showAll: true };
       }
       const showAllNormal = window.reportTableState[type].showAll;
       const flaggedRows = [];
