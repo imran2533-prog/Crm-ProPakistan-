@@ -535,9 +535,26 @@ def get_notifications():
         role = session.get('role')
         user_id = session.get('user_id')
         query = {'$or': [{'target_roles': role}, {'target_user_ids': user_id}]}
-        cursor = mongo.db.notifications.find(query).sort('created_at', -1).limit(50)
+        # Only last 20 notifications, only unread or last 7 days
+        from datetime import timedelta
+        week_ago = datetime.now() - timedelta(days=7)
+        query['created_at'] = {'$gte': week_ago}
+        cursor = mongo.db.notifications.find(query).sort('created_at', -1).limit(20)
         notifs = []
         for n in cursor:
+            notifs.append({
+                '_id': str(n['_id']),
+                'title': n.get('title'),
+                'message': n.get('message'),
+                'type': n.get('type', 'info'),
+                'meta': n.get('meta', {}),
+                'created_at': (n['created_at'].isoformat() + 'Z') if isinstance(n.get('created_at'), datetime) else n.get('created_at'),
+                'is_read': user_id in n.get('read_by', []),
+            })
+        return jsonify(notifs)
+    except Exception as e:
+        print(f"Get notifications error: {e}")
+        return jsonify([])
             notifs.append({
                 '_id': str(n['_id']),
                 'title': n.get('title'),
@@ -4111,8 +4128,24 @@ def keep_alive_ping():
     except Exception as e:
         print(f"Keep-alive ping failed: {e}")
 
+# Clean old notifications — keep DB lean
+def clean_old_notifications():
+    """Delete notifications older than 30 days to keep DB fast."""
+    try:
+        with app.app_context():
+            if not check_db(): return
+            cutoff = datetime.now() - timedelta(days=30)
+            result = mongo.db.notifications.delete_many({'created_at': {'$lt': cutoff}})
+            if result.deleted_count > 0:
+                print(f"Cleaned {result.deleted_count} old notifications.")
+    except Exception as e:
+        print(f"Notification cleanup error: {e}")
+
 if os.environ.get("RENDER"):
     scheduler.add_job(keep_alive_ping, 'interval', minutes=10, id='keep_alive_job', next_run_time=datetime.now())
+
+# Clean old notifications daily
+scheduler.add_job(clean_old_notifications, 'interval', hours=24, id='clean_notifications_job')
 
 scheduler.start()
 atexit.register(lambda: scheduler.shutdown(wait=False))
