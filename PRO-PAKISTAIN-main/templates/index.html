@@ -7452,14 +7452,6 @@
 
       const fragment = document.createDocumentFragment();
 
-      // Logic to show "All on track" message or toggle button
-      if (flaggedRows.length === 0 && normalRows.length > 0) {
-        const infoRow = document.createElement('tr');
-        infoRow.innerHTML = `<td colspan="${columns.length + 1
-          }" class="px-4 py-4 text-center text-sm text-teal-800 bg-teal-50 font-semibold">All patients are currently on track.</td>`;
-        fragment.appendChild(infoRow);
-      }
-
       flaggedRows.forEach((row) => fragment.appendChild(row));
 
       if (normalRows.length > 0) {
