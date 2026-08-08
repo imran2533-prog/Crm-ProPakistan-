@@ -7435,7 +7435,8 @@
         tr.className = 'hover:bg-gray-50 transition';
 
         if (hasIssue) {
-          tr.classList.add('bg-rose-50');
+          tr.classList.add('bg-rose-50', 'report-flagged-row', `report-flagged-row-${type}`);
+          if (!showAllNormal) tr.classList.add('hidden');
           flaggedRows.push(tr);
         } else {
           tr.classList.add('report-normal-row', `report-normal-row-${type}`);
@@ -7455,13 +7456,14 @@
         const toggleBtn = document.createElement('button');
         toggleBtn.type = 'button';
         toggleBtn.id = `report-toggle-btn-${type}`;
-        toggleBtn.dataset.count = normalRows.length;
+        toggleBtn.dataset.count = normalRows.length + flaggedRows.length;
         toggleBtn.className =
           'inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold rounded-full border border-amber-300 bg-white text-amber-700 shadow-sm hover:bg-amber-100 transition';
         toggleBtn.setAttribute('onclick', `toggleReportRows('${type}')`);
+        const totalPatients = normalRows.length + flaggedRows.length;
         toggleBtn.innerHTML = showAllNormal
           ? '<i class="fas fa-eye-slash"></i> Hide On-Track Patients'
-          : `<i class="fas fa-eye"></i> Show ${normalRows.length} On-Track Patients`;
+          : `<i class="fas fa-eye"></i> Show ${totalPatients} On-Track Patients`;
         toggleCell.appendChild(toggleBtn);
         toggleRow.appendChild(toggleCell);
         fragment.appendChild(toggleRow);
@@ -7516,18 +7518,26 @@
       const state = window.reportTableState[type];
       state.showAll = !state.showAll;
 
-      const rows = document.querySelectorAll(`.report-normal-row-${type}`);
-      rows.forEach((row) => {
+      // Hide/show ALL rows — both normal (on-track) AND flagged (off-track)
+      const normalRows = document.querySelectorAll(`.report-normal-row-${type}`);
+      const flaggedRows = document.querySelectorAll(`.report-flagged-row-${type}`);
+
+      normalRows.forEach((row) => {
+        if (state.showAll) row.classList.remove('hidden');
+        else row.classList.add('hidden');
+      });
+
+      flaggedRows.forEach((row) => {
         if (state.showAll) row.classList.remove('hidden');
         else row.classList.add('hidden');
       });
 
       const btn = document.getElementById(`report-toggle-btn-${type}`);
       if (btn) {
-        const count = btn.dataset.count || rows.length || 0;
+        const totalCount = (normalRows.length + flaggedRows.length);
         btn.innerHTML = state.showAll
           ? '<i class="fas fa-eye-slash"></i> Hide On-Track Patients'
-          : `<i class="fas fa-eye"></i> Show ${count} On-Track Patients`;
+          : `<i class="fas fa-eye"></i> Show ${totalCount} On-Track Patients`;
       }
     };
 
