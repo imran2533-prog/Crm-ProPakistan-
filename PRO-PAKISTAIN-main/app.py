@@ -4098,6 +4098,22 @@ scheduler = BackgroundScheduler(daemon=True)
 # the server restarts (Render free/paid dynos can restart); each patient is
 # only actually notified once the 11h30m gap since their last reminder has passed.
 scheduler.add_job(check_new_patient_reminders, 'interval', minutes=30, id='patient_bp_reminder_job', next_run_time=datetime.now())
+
+# Keep Render server alive — ping every 10 minutes to prevent spin-down
+def keep_alive_ping():
+    """Self-ping to prevent Render free tier spin-down which causes session loss."""
+    try:
+        import urllib.request
+        base = os.environ.get("RENDER_EXTERNAL_URL", "")
+        if base:
+            urllib.request.urlopen(f"{base}/health", timeout=8)
+            print("Keep-alive ping sent.")
+    except Exception as e:
+        print(f"Keep-alive ping failed: {e}")
+
+if os.environ.get("RENDER"):
+    scheduler.add_job(keep_alive_ping, 'interval', minutes=10, id='keep_alive_job', next_run_time=datetime.now())
+
 scheduler.start()
 atexit.register(lambda: scheduler.shutdown(wait=False))
 
