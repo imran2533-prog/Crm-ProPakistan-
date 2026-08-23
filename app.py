@@ -4102,11 +4102,15 @@ def keep_alive_ping():
     except Exception as e:
         print(f"Keep-alive ping failed: {e}")
 
-if os.environ.get("RENDER"):
-    scheduler.add_job(keep_alive_ping, 'interval', minutes=10, id='keep_alive_job', next_run_time=datetime.now())
+# Only run scheduler on non-serverless environments (Render, local)
+# Vercel is serverless — background threads are not supported
+IS_VERCEL = os.environ.get("VERCEL") or os.environ.get("VERCEL_ENV")
 
-scheduler.start()
-atexit.register(lambda: scheduler.shutdown(wait=False))
+if not IS_VERCEL:
+    if os.environ.get("RENDER"):
+        scheduler.add_job(keep_alive_ping, 'interval', minutes=10, id='keep_alive_job', next_run_time=datetime.now())
+    scheduler.start()
+    atexit.register(lambda: scheduler.shutdown(wait=False))
 
 
 @app.route('/health', methods=['GET'])
