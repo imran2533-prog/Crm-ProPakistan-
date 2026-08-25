@@ -898,25 +898,35 @@ def get_month_admissions():
 def get_patients():
     if not check_db(): return jsonify([])
     try:
-        # Exclude large base64 photo fields from list — load on demand
-        patients_cursor = mongo.db.patients.find({}, {
-            'photo1': 0,
-            'photo2': 0,
-            'photo3': 0,
+        # archived=true  → return only discharged patients (Archive view)
+        # archived=false or missing → return only active patients (Directory view)
+        # archived=all   → return everything (export/search)
+        archived_param = request.args.get('archived', 'false').lower()
+
+        if archived_param == 'true':
+            query_filter = {'isDischarged': True}
+        elif archived_param == 'all':
+            query_filter = {}
+        else:
+            query_filter = {'$or': [
+                {'isDischarged': {'$ne': True}},
+                {'isDischarged': False},
+            ]}
+
+        patients_cursor = mongo.db.patients.find(query_filter, {
+            'photo1': 0, 'photo2': 0, 'photo3': 0,
         })
-        
-        # Aggregate total canteen spending for all patients
+
         canteen_totals_agg = list(mongo.db.canteen_sales.aggregate([
-            {'$match': {
-                '$or': [
-                    {'entry_type': {'$exists': False}},
-                    {'entry_type': {'$ne': 'other'}}
-                ]
-            }},
+            {'$match': {'$or': [
+                {'entry_type': {'$exists': False}},
+                {'entry_type': {'$ne': 'other'}}
+            ]}},
             {'$group': {'_id': '$patient_id', 'total': {'$sum': '$amount'}}}
         ]))
         canteen_totals_map = {str(item['_id']): item['total'] for item in canteen_totals_agg}
-        
+
+        now = datetime.now()
         patients = []
         for p in patients_cursor:
             patient_id = str(p['_id'])
@@ -928,6 +938,32 @@ def get_patients():
             p['isDischarged'] = p.get('isDischarged', False)
             p['dischargeDate'] = p.get('dischargeDate')
             p['canteenSpent'] = canteen_totals_map.get(patient_id, 0)
+
+            # --- BILLING FIX: freeze days at dischargeDate ---
+            admission_date = p.get('admissionDate')
+            discharge_date = p.get('dischargeDate')
+            days_elapsed = 0
+            if admission_date:
+                try:
+                    if isinstance(admission_date, str):
+                        adm_dt = datetime.fromisoformat(admission_date.replace('Z', '+00:00'))
+                    else:
+                        adm_dt = admission_date
+
+                    if p['isDischarged'] and discharge_date:
+                        try:
+                            if isinstance(discharge_date, str):
+                                dis_dt = datetime.fromisoformat(discharge_date.replace('Z', '+00:00'))
+                            else:
+                                dis_dt = discharge_date
+                            days_elapsed = max(0, (dis_dt - adm_dt).days)
+                        except Exception:
+                            days_elapsed = max(0, (now - adm_dt).days)
+                    else:
+                        days_elapsed = max(0, (now - adm_dt).days)
+                except Exception:
+                    days_elapsed = 0
+            p['daysElapsed'] = days_elapsed
             patients.append(p)
         return jsonify(patients)
     except Exception as e:
@@ -997,10 +1033,17 @@ def update_patient(id):
     try:
         data = clean_input_data(request.json)
         if '_id' in data: del data['_id']
-        
-        # Allow all users to update all fields. (Restrictions removed as per user request)
-        
-        # Get existing patient to get the name for notifications
+
+        # --- DISCHARGE VALIDATION ---
+        # If marking as discharged, ensure dischargeDate is always set
+        if data.get('isDischarged') is True:
+            if not data.get('dischargeDate'):
+                data['dischargeDate'] = datetime.now().isoformat()
+
+        # If un-discharging, clear the discharge date
+        if data.get('isDischarged') is False:
+            data['dischargeDate'] = None
+
         existing_patient = mongo.db.patients.find_one({'_id': ObjectId(id)}, {'name': 1})
         patient_name = 'Unknown'
         if existing_patient:
@@ -1997,15 +2040,15 @@ def get_accounts_summary():
     if not check_db(): return jsonify({"error": "Database error"}), 500
     try:
         from datetime import datetime
-        
-        # Get all patients - Added 'isDischarged' to projection
+
+        # Get all patients including dischargeDate for billing freeze
         patients = list(mongo.db.patients.find({}, {
-            'name': 1, 'fatherName': 1, 'admissionDate': 1, 
+            'name': 1, 'fatherName': 1, 'admissionDate': 1,
             'monthlyFee': 1, 'address': 1, 'age': 1,
             'laundryStatus': 1, 'laundryAmount': 1, 'receivedAmount': 1,
-            'isDischarged': 1
+            'isDischarged': 1, 'dischargeDate': 1
         }))
-        
+
         # Get total canteen sales per patient
         pipeline = [
             {'$group': {'_id': '$patient_id', 'total_sales': {'$sum': '$amount'}}}
@@ -2013,45 +2056,63 @@ def get_accounts_summary():
         sales_data = list(mongo.db.canteen_sales.aggregate(pipeline))
         sales_map = {str(s['_id']): s['total_sales'] for s in sales_data}
 
+        now = datetime.now()
         summary = []
         for p in patients:
             pid = str(p['_id'])
-            
-            # Calculate days elapsed from admission date
+            is_discharged = p.get('isDischarged', False)
+
+            # --- BILLING FIX ---
+            # For discharged patients: freeze billing at dischargeDate
+            # For active patients:     use today (live, incrementing)
             admission_date = p.get('admissionDate')
+            discharge_date = p.get('dischargeDate')
             days_elapsed = 0
+
             if admission_date:
                 try:
                     if isinstance(admission_date, str):
                         admission_dt = datetime.fromisoformat(admission_date.replace('Z', '+00:00'))
                     else:
                         admission_dt = admission_date
-                    days_diff = (datetime.now() - admission_dt).days
-                    days_elapsed = max(0, days_diff)
-                except:
+
+                    if is_discharged and discharge_date:
+                        # Freeze at discharge date
+                        try:
+                            if isinstance(discharge_date, str):
+                                discharge_dt = datetime.fromisoformat(discharge_date.replace('Z', '+00:00'))
+                            else:
+                                discharge_dt = discharge_date
+                            days_elapsed = max(0, (discharge_dt - admission_dt).days)
+                        except Exception:
+                            days_elapsed = max(0, (now - admission_dt).days)
+                    else:
+                        # Active patient — live calculation
+                        days_elapsed = max(0, (now - admission_dt).days)
+                except Exception:
                     days_elapsed = 0
-            
-            # Get fees and calculate prorated fees
+
             monthly_fee = p.get('monthlyFee', '0')
             calculated_fee = calculate_prorated_fee(monthly_fee, days_elapsed)
-            
+
             summary.append({
                 'id': pid,
                 'name': p.get('name', ''),
                 'fatherName': p.get('fatherName', ''),
                 'age': p.get('age', ''),
-                'area': p.get('address', ''), 
+                'area': p.get('address', ''),
                 'admissionDate': p.get('admissionDate', ''),
+                'dischargeDate': p.get('dischargeDate', ''),
                 'monthlyFee': monthly_fee,
-                'calculatedFee': calculated_fee,  # NEW: Prorated fee
-                'daysElapsed': days_elapsed,  # NEW: Days elapsed for reference
+                'calculatedFee': calculated_fee,
+                'daysElapsed': days_elapsed,
                 'canteenTotal': sales_map.get(pid, 0),
                 'laundryStatus': p.get('laundryStatus', False),
                 'laundryAmount': p.get('laundryAmount', 0),
                 'receivedAmount': p.get('receivedAmount', '0'),
-                'isDischarged': p.get('isDischarged', False) # <--- NEW: Return discharge status
+                'isDischarged': is_discharged,
             })
-        
+
         return jsonify(summary)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -3192,8 +3253,9 @@ def generate_discharge_bill(id):
         if not patient:
             return jsonify({"error": "Patient not found"}), 404
         
-        # Calculate days elapsed from admission date
+        # Calculate days elapsed — frozen at dischargeDate for discharged patients
         admission_date = patient.get('admissionDate')
+        discharge_date = patient.get('dischargeDate')
         days_elapsed = 0
         if admission_date:
             try:
@@ -3201,9 +3263,19 @@ def generate_discharge_bill(id):
                     admission_dt = datetime.fromisoformat(admission_date.replace('Z', '+00:00'))
                 else:
                     admission_dt = admission_date
-                days_diff = (datetime.now() - admission_dt).days
-                days_elapsed = max(0, days_diff)
-            except:
+
+                if discharge_date:
+                    try:
+                        if isinstance(discharge_date, str):
+                            discharge_dt = datetime.fromisoformat(discharge_date.replace('Z', '+00:00'))
+                        else:
+                            discharge_dt = discharge_date
+                        days_elapsed = max(0, (discharge_dt - admission_dt).days)
+                    except Exception:
+                        days_elapsed = max(0, (datetime.now() - admission_dt).days)
+                else:
+                    days_elapsed = max(0, (datetime.now() - admission_dt).days)
+            except Exception:
                 days_elapsed = 0
         
         # Calculate canteen sales total for this patient

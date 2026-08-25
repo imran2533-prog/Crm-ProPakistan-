@@ -3538,27 +3538,32 @@
     }, 60 * 60 * 1000); // re-render every hour
 
     // --- PATIENTS ---
-    async function fetchPatients() {
+    // fetchPatients — by default active only, archived=true for Archive view
+    async function fetchPatients(archived = false) {
       try {
-        const res = await fetch('/api/patients');
+        const url = archived ? '/api/patients?archived=true' : '/api/patients';
+        const res = await fetch(url);
         if (res.ok) {
-          patientsData = await res.json();
-
-          // Sync discharged set from server state
-          dischargedPatientIds.clear();
-          patientsData.forEach((p) => {
-            const pid = p._id || p.id;
-            if (p.isDischarged && pid) dischargedPatientIds.add(pid);
-          });
-
-          renderPatientsTable(patientsData);
-
-          // Update table headers based on user role (done in renderPatientsTable)
+          const data = await res.json();
+          if (archived) {
+            archivedPatientsData = data;
+          } else {
+            patientsData = data;
+            dischargedPatientIds.clear();
+            patientsData.forEach((p) => {
+              const pid = p._id || p.id;
+              if (p.isDischarged && pid) dischargedPatientIds.add(pid);
+            });
+            renderPatientsTable(patientsData);
+          }
         }
       } catch (e) {
         console.error(e);
       }
     }
+
+    // Separate archive data store
+    if (typeof archivedPatientsData === 'undefined') var archivedPatientsData = [];
 
     window.handlePatientsSearch = function (value = '') {
       patientsSearchTerm = value;
@@ -3589,13 +3594,24 @@
       return anyId;
     }
 
+    let showDischargedInDirectory = false; // default: hide discharged from main directory
+
     function renderPatientsTable(list) {
       const tbody = document.getElementById('patients-table-body');
       tbody.innerHTML = '';
       const normalizedSearch = patientsSearchTerm.trim().toLowerCase();
-      const filteredList = normalizedSearch
+
+      // Filter: active only by default, unless showDischargedInDirectory is true
+      let filteredList = normalizedSearch
         ? list.filter((patient) => (patient.name || '').toLowerCase().includes(normalizedSearch))
         : list;
+
+      if (!showDischargedInDirectory) {
+        filteredList = filteredList.filter((p) => {
+          const pid = p._id || p.id;
+          return !p.isDischarged && !dischargedPatientIds.has(pid);
+        });
+      }
 
       // Update table headers visibility based on user role
       const isAdmin = currentUser.role === 'Admin';
@@ -3604,10 +3620,19 @@
         col.style.display = isAdmin ? '' : 'none';
       });
 
+      // Update toggle button text
+      const toggleBtn = document.getElementById('btn-toggle-discharged');
+      if (toggleBtn) {
+        toggleBtn.textContent = showDischargedInDirectory ? '👁 Hide Discharged' : '👁 Show Discharged';
+        toggleBtn.className = showDischargedInDirectory
+          ? 'text-xs px-3 py-1.5 rounded-lg border font-semibold bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
+          : 'text-xs px-3 py-1.5 rounded-lg border font-semibold bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100';
+      }
+
       if (filteredList.length === 0) {
         const emptyMessage = normalizedSearch
           ? 'No patients match your search.'
-          : 'No records found.';
+          : 'No active patients found.';
         const colspanCount = document.querySelectorAll('#patients-table-headers th').length || 12;
         tbody.innerHTML = `
             <tr>
@@ -3657,8 +3682,18 @@
           admissionDt = admissionStr ? new Date(admissionStr) : new Date();
         }
 
-        const today = new Date();
-        const daysDiff = Math.floor((today - admissionDt) / (1000 * 60 * 60 * 24));
+        // --- BILLING FIX: freeze daysElapsed at dischargeDate for discharged patients ---
+        let endDt;
+        if (isDischarged && p.dischargeDate) {
+          const ds = p.dischargeDate;
+          endDt = (typeof ds === 'string' && ds.length === 10)
+            ? new Date(ds + 'T00:00:00')
+            : new Date(ds);
+        } else {
+          endDt = new Date();
+        }
+
+        const daysDiff = Math.floor((endDt - admissionDt) / (1000 * 60 * 60 * 24));
         const daysElapsed = daysDiff >= 0 ? daysDiff : 0;
         const months = Math.floor(daysElapsed / 30);
 
@@ -3749,9 +3784,9 @@
       });
 
       // Update KPI Displays
-      if (document.getElementById('patients-total-count')) document.getElementById('patients-total-count').innerText = formatNumber(totalRecords);
-      if (document.getElementById('patients-active-count')) document.getElementById('patients-active-count').innerText = formatNumber(activeCount);
-      if (document.getElementById('patients-discharged-count')) document.getElementById('patients-discharged-count').innerText = formatNumber(dischargedCount);
+      if (document.getElementById('patients-total-count')) document.getElementById('patients-total-count').innerText = formatNumber(activePatients.length + dischargedPatients.length);
+      if (document.getElementById('patients-active-count')) document.getElementById('patients-active-count').innerText = formatNumber(activePatients.length);
+      if (document.getElementById('patients-discharged-count')) document.getElementById('patients-discharged-count').innerText = formatNumber(dischargedPatients.length);
       if (document.getElementById('patients-total-collection')) document.getElementById('patients-total-collection').innerText = `Rs ${formatNumber(totalCollection_val)}`;
     }
 
@@ -3786,12 +3821,10 @@
 
         dischargedPatientIds.add(String(resolvedId));
 
-        // Update local cache for immediate UI feedback
-        patientsData = patientsData.map((p) => {
-          if (getRecordIds(p).includes(String(resolvedId))) {
-            return { ...p, isDischarged: true, dischargeDate: payload.dischargeDate };
-          }
-          return p;
+        // Remove from active patientsData immediately — patient goes to Archive
+        patientsData = patientsData.filter((p) => {
+          const pid = p._id || p.id;
+          return String(pid) !== String(resolvedId);
         });
 
         await printDischargeSlip(resolvedId);
@@ -9947,6 +9980,11 @@
                 class="w-full pl-10 pr-4 py-2 bg-white border border-teal-100 rounded-xl shadow-sm focus:ring-2 focus:ring-teal-500 focus:border-teal-500 text-sm text-gray-700 placeholder:text-gray-400 transition-all"
                 placeholder="Search patients by name..." oninput="handlePatientsSearch(this.value)" />
             </div>
+            <button id="btn-toggle-discharged"
+              onclick="showDischargedInDirectory=!showDischargedInDirectory; renderPatientsTable(patientsData);"
+              class="text-xs px-3 py-1.5 rounded-lg border font-semibold bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100">
+              👁 Show Discharged
+            </button>
             <button onclick="document.getElementById('export-modal').classList.remove('hidden')"
               class="bg-white border border-gray-200 hover:border-gray-300 text-gray-700 px-5 py-2.5 rounded-xl font-bold text-sm transition flex items-center shadow-sm active:scale-95 group">
               <i class="fas fa-file-export mr-2 text-gray-400 group-hover:text-gray-600"></i> Export
