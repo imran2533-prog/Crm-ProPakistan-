@@ -3471,7 +3471,8 @@ def get_bp_records():
 @app.route('/api/reports/bp', methods=['POST'])
 @role_required(['Admin', 'General Staff', 'Doctor'])
 def save_bp_record():
-    """Upsert a BP reading + note for a patient on a given date."""
+    """Upsert a BP reading + note for a patient on a given date.
+    Supports both slot_bp (10AM) and slot_bp2 (3PM) columns."""
     if not check_db(): return jsonify({"error": "Database error"}), 500
     data = clean_input_data(request.json)
     try:
@@ -3479,15 +3480,21 @@ def save_bp_record():
             'date': data['date'],
             'patient_id': ObjectId(data['patient_id'])
         }
-        update = {
-            '$set': {
-                'bp_value': data.get('bp_value', ''),
-                'bp_note': data.get('bp_note', ''),
-                'updated_at': datetime.now(),
-                'updated_by': session.get('username', 'System')
-            }
+        # Build $set only for fields that were sent
+        set_fields = {
+            'updated_at': datetime.now(),
+            'updated_by': session.get('username', 'System')
         }
-        mongo.db.bp_records.update_one(query, update, upsert=True)
+        if 'bp_value' in data:
+            set_fields['bp_value'] = data.get('bp_value', '')
+        if 'bp_note' in data:
+            set_fields['bp_note'] = data.get('bp_note', '')
+        if 'bp2_value' in data:
+            set_fields['bp2_value'] = data.get('bp2_value', '')
+        if 'bp2_note' in data:
+            set_fields['bp2_note'] = data.get('bp2_note', '')
+
+        mongo.db.bp_records.update_one(query, {'$set': set_fields}, upsert=True)
         return jsonify({"message": "BP saved"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -3510,16 +3517,31 @@ def save_report_config():
     if not check_db(): return jsonify({"error": "Database error"}), 500
     data = clean_input_data(request.json)
     try:
-        # Save day_columns and night_columns
+        # Strip slot_bp from saved columns — it's always injected from code defaults
+        def strip_bp(cols):
+            if not cols: return cols
+            return [c for c in cols if c.get('key') != 'slot_bp']
+
         mongo.db.report_config.update_one(
             {'_id': 'main_config'},
             {'$set': {
-                'day_columns': data.get('day_columns'),
-                'night_columns': data.get('night_columns')
+                'day_columns': strip_bp(data.get('day_columns')),
+                'night_columns': strip_bp(data.get('night_columns'))
             }},
             upsert=True
         )
         return jsonify({"message": "Layout saved"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/reports/config/reset', methods=['POST'])
+@role_required(['Admin'])
+def reset_report_config():
+    """Delete saved layout config so defaults reload on next page load."""
+    if not check_db(): return jsonify({"error": "Database error"}), 500
+    try:
+        mongo.db.report_config.delete_one({'_id': 'main_config'})
+        return jsonify({"message": "Config reset to defaults"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

@@ -7122,6 +7122,7 @@
       'slot_1300',
       'slot_1400',
       'slot_1500',
+      'slot_bp2',
       'slot_1600',
       'slot_1700',
       'slot_1800',
@@ -7154,8 +7155,9 @@
       { key: 'slot_1100', label: '11:00 AM Group Therapy' },
       { key: 'slot_1200', label: '12:00 PM Group Therapy' },
       { key: 'slot_1300', label: '01:00 PM Namaz' },
-      { key: 'slot_1400', label: '02:00 PM Lunch' },
+      { key: 'slot_1400', label: '02:30 PM Lunch' },
       { key: 'slot_1500', label: '03:00 PM Dr. Round' },
+      { key: 'slot_bp2',  label: 'BP' },
       { key: 'slot_1600', label: '04:00 PM TV Time' },
       { key: 'slot_1700', label: '05:00 PM Namaz' },
       { key: 'slot_1800', label: '06:00 PM Group Therapy' },
@@ -7208,8 +7210,8 @@
       const baseMap = new Map(defaults.map((col) => [col.key, { ...col }]));
       if (Array.isArray(columns)) {
         columns.forEach((col) => {
-          // Skip slot_bp — it's always injected from DEFAULT_DAY_CONFIG, never from DB config
-          if (col.key === 'slot_bp') return;
+          // Skip slot_bp and slot_bp2 — always injected from DEFAULT_DAY_CONFIG, never from DB config
+          if (col.key === 'slot_bp' || col.key === 'slot_bp2') return;
           if (baseMap.has(col.key)) {
             baseMap.set(col.key, { ...baseMap.get(col.key), label: col.label });
           } else {
@@ -7228,6 +7230,15 @@
       // Show Save Button only for Admins
       if (currentUser.role === 'Admin') {
         document.getElementById('btn-save-layout').classList.remove('hidden');
+      }
+
+      // Auto-reset saved config once to pick up new BP column position
+      // Uses localStorage flag so it only runs once per browser
+      if (currentUser.role === 'Admin' && !localStorage.getItem('bp_col_v3_reset')) {
+        try {
+          await fetch('/api/reports/config/reset', { method: 'POST' });
+          localStorage.setItem('bp_col_v3_reset', '1');
+        } catch(_) {}
       }
 
       // 1. Fetch Layout Config
@@ -7291,7 +7302,12 @@
         if (bpRes.ok) {
           const bpData = await bpRes.json();
           bpData.forEach((r) => {
-            bpMap[r.patient_id] = { bp_value: r.bp_value || '', bp_note: r.bp_note || '' };
+            bpMap[r.patient_id] = {
+              bp_value:  r.bp_value  || '',
+              bp_note:   r.bp_note   || '',
+              bp2_value: r.bp2_value || '',
+              bp2_note:  r.bp2_note  || '',
+            };
           });
         }
       } catch (e) {
@@ -7427,7 +7443,7 @@
                          </th>`;
 
       columns.forEach((col, index) => {
-        if (col.key === 'slot_bp') {
+        if (col.key === 'slot_bp' || col.key === 'slot_bp2') {
           headersHtml += `<th data-idx="${index}" data-bp="true"
                           class="px-1 py-2 text-center align-middle whitespace-normal min-w-[80px] max-w-[100px] border-l border-white/20 bg-blue-700 cursor-default">
                           <span class="text-[0.6rem] leading-tight block font-bold">🩺 BP</span>
@@ -7487,11 +7503,13 @@
                        </td>`;
 
         columns.forEach((col) => {
-          // *** BP COLUMN — special input cell ***
-          if (col.key === 'slot_bp' && type === 'day') {
+          // *** BP COLUMNS — special input cells ***
+          if ((col.key === 'slot_bp' || col.key === 'slot_bp2') && type === 'day') {
+            const isSecond = col.key === 'slot_bp2';
             const bpRec = bpMap[pId] || {};
-            const bpVal = escapeHtml(bpRec.bp_value || '');
-            const bpNote = escapeHtml(bpRec.bp_note || '');
+            const bpVal  = escapeHtml(isSecond ? (bpRec.bp2_value || '') : (bpRec.bp_value || ''));
+            const bpNote = escapeHtml(isSecond ? (bpRec.bp2_note  || '') : (bpRec.bp_note  || ''));
+            const slotKey = col.key; // 'slot_bp' or 'slot_bp2'
             rowHtml += `
               <td class="p-0.5 border align-top bg-blue-50" style="min-width:85px;max-width:110px;">
                 <input
@@ -7501,6 +7519,7 @@
                   maxlength="10"
                   class="bp-value-input w-full text-[0.6rem] border border-blue-300 rounded px-1 py-0.5 text-center focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white"
                   data-patient="${pId}"
+                  data-bpslot="${slotKey}"
                   aria-label="BP value for patient"
                   onblur="saveBpRecord(this)"
                   onkeydown="if(event.key==='Enter'){this.blur();}"
@@ -7511,14 +7530,15 @@
                   rows="1"
                   class="bp-note-input w-full text-[0.55rem] border border-blue-200 rounded px-1 py-0.5 mt-0.5 resize-none focus:outline-none focus:ring-1 focus:ring-blue-300 bg-white"
                   data-patient="${pId}"
+                  data-bpslot="${slotKey}"
                   aria-label="BP note for patient"
                   onblur="saveBpRecord(this)"
                 >${bpNote}</textarea>
               </td>`;
             return;
           }
-          // Skip BP column in night table
-          if (col.key === 'slot_bp') {
+          // Skip BP columns in night table
+          if (col.key === 'slot_bp' || col.key === 'slot_bp2') {
             rowHtml += `<td class="p-0.5 border text-center align-middle bg-gray-50 text-gray-300 text-[0.55rem]">—</td>`;
             return;
           }
@@ -7690,34 +7710,40 @@
     window.saveBpRecord = function (inputEl) {
       const pId = inputEl.dataset.patient;
       if (!pId) return;
+      const slotKey = inputEl.dataset.bpslot || 'slot_bp';
+      const isSecond = slotKey === 'slot_bp2';
 
-      // Read BOTH fields from the same row's BP cell
+      // Read BOTH fields from the same BP cell
       const cell = inputEl.closest('td');
       const valueInput = cell.querySelector('.bp-value-input');
       const noteInput  = cell.querySelector('.bp-note-input');
       const bpValue = (valueInput ? valueInput.value : '').trim();
       const bpNote  = (noteInput  ? noteInput.value  : '').trim();
 
-      // Debounce — save 600ms after last keystroke/blur
-      clearTimeout(_bpSaveTimers[pId]);
-      _bpSaveTimers[pId] = setTimeout(async () => {
+      // Debounce per patient+slot
+      const timerKey = pId + slotKey;
+      clearTimeout(_bpSaveTimers[timerKey]);
+      _bpSaveTimers[timerKey] = setTimeout(async () => {
         const datePicker = document.getElementById('report-date-picker');
         const date = (datePicker && datePicker.value) ? datePicker.value : localDateISO();
 
-        // Show subtle saving indicator on input
         if (valueInput) valueInput.style.borderColor = '#f59e0b';
+
+        const payload = isSecond
+          ? { date, patient_id: pId, bp2_value: bpValue, bp2_note: bpNote }
+          : { date, patient_id: pId, bp_value: bpValue, bp_note: bpNote };
 
         try {
           const res = await fetch('/api/reports/bp', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ date, patient_id: pId, bp_value: bpValue, bp_note: bpNote }),
+            body: JSON.stringify(payload),
           });
           if (res.ok) {
-            if (valueInput) valueInput.style.borderColor = '#86efac'; // green flash
+            if (valueInput) valueInput.style.borderColor = '#86efac';
             setTimeout(() => { if (valueInput) valueInput.style.borderColor = ''; }, 1200);
           } else {
-            if (valueInput) valueInput.style.borderColor = '#f87171'; // red on fail
+            if (valueInput) valueInput.style.borderColor = '#f87171';
           }
         } catch (e) {
           console.error('BP save error:', e);
