@@ -3722,6 +3722,52 @@ def add_psych_session_note(session_id):
         print(f"Psych session note error: {e}")
         return jsonify({"error": str(e)}), 500
 
+
+@app.route('/api/psych-sessions/<session_id>', methods=['DELETE'])
+@role_required(['Admin'])
+def delete_psych_session(session_id):
+    """Admin only — permanently delete a psych session."""
+    if not check_db():
+        return jsonify({"error": "Database error"}), 500
+    try:
+        result = mongo.db.psych_sessions.delete_one({'_id': ObjectId(session_id)})
+        if result.deleted_count == 0:
+            return jsonify({"error": "Session not found"}), 404
+        return jsonify({"message": "Session deleted"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/psych-sessions/<session_id>', methods=['PUT'])
+@role_required(['Admin'])
+def edit_psych_session(session_id):
+    """Admin only — update date, time, psychologist, patients, title of a session."""
+    if not check_db():
+        return jsonify({"error": "Database error"}), 500
+    data = clean_input_data(request.json)
+    try:
+        session_doc = mongo.db.psych_sessions.find_one({'_id': ObjectId(session_id)})
+        if not session_doc:
+            return jsonify({"error": "Session not found"}), 404
+
+        set_fields = {'updated_at': datetime.now(), 'updated_by': session.get('username')}
+        if 'date' in data:
+            set_fields['date'] = data['date']
+        if 'time_slot' in data:
+            set_fields['time_slot'] = data['time_slot']
+        if 'title' in data:
+            set_fields['title'] = data['title']
+        if 'patient_ids' in data:
+            patient_ids = [ObjectId(pid) for pid in data['patient_ids'] if pid]
+            set_fields['patient_ids'] = patient_ids
+        if 'psychologist_id' in data:
+            set_fields['psychologist_id'] = data['psychologist_id']
+
+        mongo.db.psych_sessions.update_one({'_id': ObjectId(session_id)}, {'$set': set_fields})
+        return jsonify({"message": "Session updated"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/attendance')
 def get_attendance():
     if not check_db(): return jsonify({"error": "Database error"}), 500

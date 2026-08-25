@@ -6972,27 +6972,127 @@
 
           const actionBtn = s.note
             ? isAdmin
-              ? `<button class="text-blue-600 hover:text-blue-800 font-semibold" onclick="openPsychNoteModal('${s._id}', true)">Edit Note</button>`
+              ? `<button class="text-blue-600 hover:text-blue-800 font-semibold text-xs" onclick="openPsychNoteModal('${s._id}', true)">Edit Note</button>`
               : '<span class="text-gray-400 text-sm">Locked</span>'
             : canAddNote
-              ? `<button class="text-teal-700 hover:text-teal-900 font-semibold" onclick="openPsychNoteModal('${s._id}')">Add Note</button>`
+              ? `<button class="text-teal-700 hover:text-teal-900 font-semibold text-xs" onclick="openPsychNoteModal('${s._id}')">Add Note</button>`
               : '-';
+
+          const adminBtns = isAdmin ? `
+            <div class="flex flex-col gap-1 mt-1">
+              <button onclick="editPsychSession('${s._id}')"
+                class="text-xs bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 rounded px-2 py-0.5 font-semibold">
+                ✏️ Edit
+              </button>
+              <button onclick="deletePsychSession('${s._id}')"
+                class="text-xs bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 rounded px-2 py-0.5 font-semibold">
+                🗑️ Delete
+              </button>
+            </div>` : '';
 
           return `
               <tr class="hover:bg-teal-50">
                 <td class="px-3 py-2">${s.date || ''}</td>
                 <td class="px-3 py-2">${s.time_slot || ''}</td>
-                <td class="px-3 py-2">${escapeHtml(
-            s.psychologist_name || s.psychologist_id || ''
-          )}</td>
+                <td class="px-3 py-2">${escapeHtml(s.psychologist_name || s.psychologist_id || '')}</td>
                 <td class="px-3 py-2">${patients}</td>
                 <td class="px-3 py-2">${escapeHtml(s.title || '')}</td>
                 <td class="px-3 py-2">${noteStatus}</td>
-                <td class="px-3 py-2 text-center">${actionBtn}</td>
+                <td class="px-3 py-2 text-center">
+                  ${actionBtn}
+                  ${adminBtns}
+                </td>
               </tr>`;
         })
         .join('');
     }
+
+    // --- DELETE PSYCH SESSION ---
+    window.deletePsychSession = async function(sessionId) {
+      if (!confirm('Kya aap is session ko permanently delete karna chahte hain?')) return;
+      try {
+        const res = await fetch(`/api/psych-sessions/${sessionId}`, { method: 'DELETE' });
+        if (res.ok) {
+          showSuccessModal('Session deleted');
+          loadPsychSessions();
+        } else {
+          const err = await res.json();
+          showSuccessModal(err.error || 'Delete failed', true);
+        }
+      } catch (e) {
+        showSuccessModal('Network error', true);
+      }
+    };
+
+    // --- EDIT PSYCH SESSION ---
+    window.editPsychSession = function(sessionId) {
+      const s = psychSessions.find(x => x._id === sessionId);
+      if (!s) return;
+
+      // Populate edit modal fields
+      document.getElementById('edit-psych-id').value = sessionId;
+      document.getElementById('edit-psych-date').value = s.date || '';
+      document.getElementById('edit-psych-time').value = s.time_slot || '';
+      document.getElementById('edit-psych-title').value = s.title || '';
+
+      // Populate psychologist dropdown
+      const psychSelect = document.getElementById('edit-psych-psychologist');
+      const origSelect = document.getElementById('psych-session-psychologist');
+      if (origSelect && psychSelect) {
+        psychSelect.innerHTML = origSelect.innerHTML;
+        psychSelect.value = s.psychologist_id || '';
+      }
+
+      // Populate patients multi-select
+      const patSelect = document.getElementById('edit-psych-patients');
+      const origPat = document.getElementById('psych-session-patients');
+      if (origPat && patSelect) {
+        patSelect.innerHTML = origPat.innerHTML;
+        const selectedIds = s.patient_ids || [];
+        Array.from(patSelect.options).forEach(opt => {
+          opt.selected = selectedIds.includes(opt.value);
+        });
+      }
+
+      document.getElementById('edit-psych-modal').classList.remove('hidden');
+    };
+
+    window.closeEditPsychModal = function() {
+      document.getElementById('edit-psych-modal').classList.add('hidden');
+    };
+
+    window.submitEditPsychSession = async function(e) {
+      e.preventDefault();
+      const sessionId = document.getElementById('edit-psych-id').value;
+      const patSelect = document.getElementById('edit-psych-patients');
+      const patientIds = Array.from(patSelect.selectedOptions).map(o => o.value);
+
+      const payload = {
+        date:             document.getElementById('edit-psych-date').value,
+        time_slot:        document.getElementById('edit-psych-time').value,
+        title:            document.getElementById('edit-psych-title').value,
+        psychologist_id:  document.getElementById('edit-psych-psychologist').value,
+        patient_ids:      patientIds,
+      };
+
+      try {
+        const res = await fetch(`/api/psych-sessions/${sessionId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (res.ok) {
+          showSuccessModal('Session updated');
+          closeEditPsychModal();
+          loadPsychSessions();
+        } else {
+          const err = await res.json();
+          showSuccessModal(err.error || 'Update failed', true);
+        }
+      } catch(e) {
+        showSuccessModal('Network error', true);
+      }
+    };
 
     async function submitPsychSession(e) {
       e.preventDefault();
@@ -10138,6 +10238,46 @@
         </div>
       </div>
     </section>
+
+    <!-- Edit Psych Session Modal -->
+    <div id="edit-psych-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+        <div class="flex justify-between items-center mb-4">
+          <h3 class="text-lg font-bold text-teal-800"><i class="fas fa-edit mr-2"></i>Edit Session</h3>
+          <button onclick="closeEditPsychModal()" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+        </div>
+        <form onsubmit="submitEditPsychSession(event)" class="space-y-3">
+          <input type="hidden" id="edit-psych-id" />
+          <div>
+            <label class="text-xs font-semibold text-gray-600">Psychologist</label>
+            <select id="edit-psych-psychologist" class="w-full border rounded px-3 py-2" required></select>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="text-xs font-semibold text-gray-600">Date</label>
+              <input type="date" id="edit-psych-date" class="w-full border rounded px-3 py-2" required />
+            </div>
+            <div>
+              <label class="text-xs font-semibold text-gray-600">Time Slot</label>
+              <input type="text" id="edit-psych-time" class="w-full border rounded px-3 py-2" placeholder="e.g. 10:00 - 11:00" />
+            </div>
+          </div>
+          <div>
+            <label class="text-xs font-semibold text-gray-600">Title / Focus</label>
+            <input type="text" id="edit-psych-title" class="w-full border rounded px-3 py-2" placeholder="Optional" />
+          </div>
+          <div>
+            <label class="text-xs font-semibold text-gray-600">Patients</label>
+            <select id="edit-psych-patients" multiple size="5" class="w-full border rounded px-3 py-2"></select>
+            <p class="text-xs text-gray-400 mt-1">Ctrl/Cmd + click to select multiple</p>
+          </div>
+          <div class="flex gap-3 pt-2">
+            <button type="submit" class="flex-1 bg-teal-600 text-white py-2 rounded-lg font-semibold hover:bg-teal-700">Save Changes</button>
+            <button type="button" onclick="closeEditPsychModal()" class="flex-1 bg-gray-100 text-gray-700 py-2 rounded-lg font-semibold hover:bg-gray-200">Cancel</button>
+          </div>
+        </form>
+      </div>
+    </div>
 
     <section id="canteen-view" class="view-section hidden p-4 md:p-8">
       <div class="mb-6 flex flex-col md:flex-row md:justify-between md:items-center gap-4">
