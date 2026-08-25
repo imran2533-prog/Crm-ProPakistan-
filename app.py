@@ -3386,6 +3386,49 @@ def update_daily_report():
         print(f"Report Update Error: {e}")
         return jsonify({"error": str(e)}), 500
 
+# --- BP (BLOOD PRESSURE) API ---
+
+@app.route('/api/reports/bp', methods=['GET'])
+@role_required(['Admin', 'General Staff', 'Doctor'])
+def get_bp_records():
+    """Return all BP records for a given date."""
+    if not check_db(): return jsonify({"error": "Database error"}), 500
+    date_str = request.args.get('date')
+    if not date_str:
+        return jsonify({"error": "Date required"}), 400
+    try:
+        records = list(mongo.db.bp_records.find({'date': date_str}))
+        for r in records:
+            r['_id'] = str(r['_id'])
+            r['patient_id'] = str(r['patient_id'])
+        return jsonify(records)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/reports/bp', methods=['POST'])
+@role_required(['Admin', 'General Staff', 'Doctor'])
+def save_bp_record():
+    """Upsert a BP reading + note for a patient on a given date."""
+    if not check_db(): return jsonify({"error": "Database error"}), 500
+    data = clean_input_data(request.json)
+    try:
+        query = {
+            'date': data['date'],
+            'patient_id': ObjectId(data['patient_id'])
+        }
+        update = {
+            '$set': {
+                'bp_value': data.get('bp_value', ''),
+                'bp_note': data.get('bp_note', ''),
+                'updated_at': datetime.now(),
+                'updated_by': session.get('username', 'System')
+            }
+        }
+        mongo.db.bp_records.update_one(query, update, upsert=True)
+        return jsonify({"message": "BP saved"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 # --- REPORT CONFIGURATION API ---
     
 @app.route('/api/reports/config', methods=['GET'])

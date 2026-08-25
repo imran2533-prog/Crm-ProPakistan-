@@ -7116,6 +7116,7 @@
       'slot_0800',
       'slot_0900',
       'slot_1000',
+      'slot_bp',
       'slot_1100',
       'slot_1200',
       'slot_1300',
@@ -7149,6 +7150,7 @@
       { key: 'slot_0800', label: '08:00 AM Breakfast' },
       { key: 'slot_0900', label: '09:00 AM Quran/Yoga' },
       { key: 'slot_1000', label: '10:00 AM Dr. Round' },
+      { key: 'slot_bp',   label: 'BP' },
       { key: 'slot_1100', label: '11:00 AM Group Therapy' },
       { key: 'slot_1200', label: '12:00 PM Group Therapy' },
       { key: 'slot_1300', label: '01:00 PM Namaz' },
@@ -7206,8 +7208,8 @@
       const baseMap = new Map(defaults.map((col) => [col.key, { ...col }]));
       if (Array.isArray(columns)) {
         columns.forEach((col) => {
-          // If the key exists in our new 12-hour layout, update its label from DB.
-          // If it's an old key (like slot_bkfst), it gets added to the map.
+          // Skip slot_bp — it's always injected from DEFAULT_DAY_CONFIG, never from DB config
+          if (col.key === 'slot_bp') return;
           if (baseMap.has(col.key)) {
             baseMap.set(col.key, { ...baseMap.get(col.key), label: col.label });
           } else {
@@ -7254,7 +7256,6 @@
       }
 
       // Clean up: Filter out old legacy keys if you want a strictly clean table
-      // (Optional: this line removes columns that aren't in our new 12-hour definition)
       DAY_CONFIG = DAY_CONFIG.filter((c) => DAY_COLUMN_ORDER.includes(c.key));
       NIGHT_CONFIG = NIGHT_CONFIG.filter((c) => NIGHT_COLUMN_ORDER.includes(c.key));
 
@@ -7276,9 +7277,23 @@
         reportMap[r.patient_id] = r.schedule || {};
       });
 
+      // 3b. Fetch BP Data for this date
+      let bpMap = {}; // { patient_id: { bp_value, bp_note } }
+      try {
+        const bpRes = await fetch(`/api/reports/bp?date=${date}`);
+        if (bpRes.ok) {
+          const bpData = await bpRes.json();
+          bpData.forEach((r) => {
+            bpMap[r.patient_id] = { bp_value: r.bp_value || '', bp_note: r.bp_note || '' };
+          });
+        }
+      } catch (e) {
+        console.error('BP load error', e);
+      }
+
       // 4. Render Both Tables
-      renderSplitTable('day', DAY_CONFIG, activePatients, reportMap);
-      renderSplitTable('night', NIGHT_CONFIG, activePatients, reportMap);
+      renderSplitTable('day', DAY_CONFIG, activePatients, reportMap, bpMap);
+      renderSplitTable('night', NIGHT_CONFIG, activePatients, reportMap, bpMap);
     }
 
     // Toggle Status: Day -> Empty -> Done -> Not Done -> Complaint -> Empty
@@ -7383,7 +7398,7 @@
       wc: 'WC',
     };
 
-    function renderSplitTable(type, columns, patients, reportMap) {
+    function renderSplitTable(type, columns, patients, reportMap, bpMap = {}) {
       const headerRow = document.getElementById(`${type}-header-row`);
       const tbody = document.getElementById(`${type}-table-body`);
       const isAdmin = currentUser.role === 'Admin';
@@ -7399,15 +7414,23 @@
                          </th>`;
 
       columns.forEach((col, index) => {
+        if (col.key === 'slot_bp') {
+          // BP column — special fixed header, not editable like others
+          headersHtml += `<th data-idx="${index}" data-bp="true"
+                          class="px-1 py-2 text-center align-middle whitespace-normal min-w-[80px] max-w-[100px] border-l border-white/20 bg-blue-700 cursor-default">
+                          <span class="text-[0.6rem] leading-tight block font-bold">🩺 BP</span>
+                          <span class="text-[0.5rem] leading-tight block opacity-80">Value / Note</span>
+                        </th>`;
+          return;
+        }
+
         // *** EDITABLE HEADER LOGIC ***
-        // We set contenteditable="true" for ALL columns if user is Admin.
         const isEditable = isAdmin;
         const editableAttr = isEditable ? 'contenteditable="true"' : '';
         const blurAttr = isEditable ? 'onblur="markLayoutDirty()"' : '';
         const cursorClass = isEditable ? 'cursor-text hover:bg-white/10' : 'cursor-default';
         const titleAttr = `title="${escapeHtml(col.label || '')}"`;
 
-        // Render simple text inside the header so it's easily editable
         const headerContent = `<span class="text-[0.6rem] leading-tight block whitespace-pre-wrap">${escapeHtml(
           col.label || ''
         )}</span>`;
@@ -7451,6 +7474,42 @@
                        </td>`;
 
         columns.forEach((col) => {
+          // *** BP COLUMN — special input cell ***
+          if (col.key === 'slot_bp' && type === 'day') {
+            const bpRec = bpMap[pId] || {};
+            const bpVal = escapeHtml(bpRec.bp_value || '');
+            const bpNote = escapeHtml(bpRec.bp_note || '');
+            rowHtml += `
+              <td class="p-0.5 border align-top bg-blue-50" style="min-width:85px;max-width:110px;">
+                <input
+                  type="text"
+                  placeholder="e.g. 120/80"
+                  value="${bpVal}"
+                  maxlength="10"
+                  class="bp-value-input w-full text-[0.6rem] border border-blue-300 rounded px-1 py-0.5 text-center focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white"
+                  data-patient="${pId}"
+                  aria-label="BP value for patient"
+                  onblur="saveBpRecord(this)"
+                  onkeydown="if(event.key==='Enter'){this.blur();}"
+                />
+                <textarea
+                  placeholder="Note..."
+                  maxlength="120"
+                  rows="1"
+                  class="bp-note-input w-full text-[0.55rem] border border-blue-200 rounded px-1 py-0.5 mt-0.5 resize-none focus:outline-none focus:ring-1 focus:ring-blue-300 bg-white"
+                  data-patient="${pId}"
+                  aria-label="BP note for patient"
+                  onblur="saveBpRecord(this)"
+                >${bpNote}</textarea>
+              </td>`;
+            return;
+          }
+          // Skip BP column in night table
+          if (col.key === 'slot_bp') {
+            rowHtml += `<td class="p-0.5 border text-center align-middle bg-gray-50 text-gray-300 text-[0.55rem]">—</td>`;
+            return;
+          }
+
           const status = schedules[col.key];
           if (status === 'complaint') hasIssue = true;
           const cellClass = getStatusClass(status);
@@ -7584,6 +7643,49 @@
     // Debounce timer for auto-save
     let _autoSaveTimer = null;
 
+    // --- BP SAVE ---
+    // BP debounce timers per patient
+    const _bpSaveTimers = {};
+
+    window.saveBpRecord = function (inputEl) {
+      const pId = inputEl.dataset.patient;
+      if (!pId) return;
+
+      // Read BOTH fields from the same row's BP cell
+      const cell = inputEl.closest('td');
+      const valueInput = cell.querySelector('.bp-value-input');
+      const noteInput  = cell.querySelector('.bp-note-input');
+      const bpValue = (valueInput ? valueInput.value : '').trim();
+      const bpNote  = (noteInput  ? noteInput.value  : '').trim();
+
+      // Debounce — save 600ms after last keystroke/blur
+      clearTimeout(_bpSaveTimers[pId]);
+      _bpSaveTimers[pId] = setTimeout(async () => {
+        const datePicker = document.getElementById('report-date-picker');
+        const date = (datePicker && datePicker.value) ? datePicker.value : localDateISO();
+
+        // Show subtle saving indicator on input
+        if (valueInput) valueInput.style.borderColor = '#f59e0b';
+
+        try {
+          const res = await fetch('/api/reports/bp', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ date, patient_id: pId, bp_value: bpValue, bp_note: bpNote }),
+          });
+          if (res.ok) {
+            if (valueInput) valueInput.style.borderColor = '#86efac'; // green flash
+            setTimeout(() => { if (valueInput) valueInput.style.borderColor = ''; }, 1200);
+          } else {
+            if (valueInput) valueInput.style.borderColor = '#f87171'; // red on fail
+          }
+        } catch (e) {
+          console.error('BP save error:', e);
+          if (valueInput) valueInput.style.borderColor = '#f87171';
+        }
+      }, 600);
+    };
+
     function markLayoutDirty() {
       const btn = document.getElementById('btn-save-layout');
       if (btn) {
@@ -7602,6 +7704,8 @@
         const ths = document.querySelectorAll(`#${id}-header-row th[data-idx]`);
         const newCols = [];
         ths.forEach((th) => {
+          // Skip the BP column — it's not a regular editable layout column
+          if (th.dataset.bp) return;
           const idx = th.getAttribute('data-idx');
           // Retrieve the original key based on index to maintain backend data mapping
           const originalKey = id === 'day' ? DAY_CONFIG[idx].key : NIGHT_CONFIG[idx].key;
