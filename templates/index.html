@@ -7273,8 +7273,15 @@
       }
 
       const reportMap = {};
+      const completionMap = {}; // { patient_id: { row_completed_at, duration_minutes } }
       reportData.forEach((r) => {
         reportMap[r.patient_id] = r.schedule || {};
+        if (r.row_completed_at) {
+          completionMap[r.patient_id] = {
+            row_completed_at: r.row_completed_at,
+            duration_minutes: r.duration_minutes || null,
+          };
+        }
       });
 
       // 3b. Fetch BP Data for this date
@@ -7292,8 +7299,8 @@
       }
 
       // 4. Render Both Tables
-      renderSplitTable('day', DAY_CONFIG, activePatients, reportMap, bpMap);
-      renderSplitTable('night', NIGHT_CONFIG, activePatients, reportMap, bpMap);
+      renderSplitTable('day', DAY_CONFIG, activePatients, reportMap, bpMap, completionMap);
+      renderSplitTable('night', NIGHT_CONFIG, activePatients, reportMap, bpMap, completionMap);
     }
 
     // Toggle Status: Day -> Empty -> Done -> Not Done -> Complaint -> Empty
@@ -7348,26 +7355,34 @@
           });
 
           if (!res.ok) {
-            // Rate limit — retry after delay
             if (res.status === 429 && retryCount < 3) {
               setTimeout(() => saveData(retryCount + 1), 1500 * (retryCount + 1));
               return;
             }
-            // Other error — revert UI and show error
             console.error('Save failed:', res.status);
             btnElement.className = `w-full h-6 rounded flex items-center justify-center transition-all text-xs ${getStatusClass(currentStatus)}`;
             btnElement.innerHTML = getStatusIcon(currentStatus);
             btnElement.dataset.status = currentStatus || '';
             btnElement.setAttribute('onclick', `cycleReportStatus(this, '${patientId}', '${timeSlot}', '${currentStatus}', '${reportType}')`);
             if (typeof showSuccessModal === 'function') showSuccessModal('Failed to save. Please try again.', true);
+          } else {
+            // Update completion cell in real-time from backend response
+            try {
+              const respData = await res.json();
+              const compCell = document.querySelector(`[data-completion-cell="${patientId}"]`);
+              if (compCell && respData) {
+                compCell.innerHTML = buildCompletionCell({
+                  row_completed_at: respData.row_completed_at || null,
+                  duration_minutes: respData.duration_minutes != null ? respData.duration_minutes : null,
+                });
+              }
+            } catch (_) { /* ignore parse errors */ }
           }
         } catch (e) {
-          // Network error — retry up to 3 times
           if (retryCount < 3) {
             setTimeout(() => saveData(retryCount + 1), 2000 * (retryCount + 1));
           } else {
             console.error('Network error after retries:', e);
-            // Revert UI on final failure
             btnElement.className = `w-full h-6 rounded flex items-center justify-center transition-all text-xs ${getStatusClass(currentStatus)}`;
             btnElement.innerHTML = getStatusIcon(currentStatus);
             btnElement.dataset.status = currentStatus || '';
@@ -7398,16 +7413,14 @@
       wc: 'WC',
     };
 
-    function renderSplitTable(type, columns, patients, reportMap, bpMap = {}) {
+    function renderSplitTable(type, columns, patients, reportMap, bpMap = {}, completionMap = {}) {
       const headerRow = document.getElementById(`${type}-header-row`);
       const tbody = document.getElementById(`${type}-table-body`);
       const isAdmin = currentUser.role === 'Admin';
 
       // Build Headers
       const headerBaseClasses =
-        type === 'day'
-          ? 'px-2 py-2 text-left whitespace-nowrap sticky left-0 z-20 shadow-md bg-teal-600 text-white'
-          : 'px-2 py-2 text-left whitespace-nowrap sticky left-0 z-20 shadow-md bg-teal-600 text-white';
+        'px-2 py-2 text-left whitespace-nowrap sticky left-0 z-20 shadow-md bg-teal-600 text-white';
 
       let headersHtml = `<th id="${type}-patient-header" class="${headerBaseClasses}" style="min-width: 100px; max-width: 140px;">
                            <span class="patient-header-label font-semibold tracking-wide text-xs">Patient</span>
@@ -7415,7 +7428,6 @@
 
       columns.forEach((col, index) => {
         if (col.key === 'slot_bp') {
-          // BP column — special fixed header, not editable like others
           headersHtml += `<th data-idx="${index}" data-bp="true"
                           class="px-1 py-2 text-center align-middle whitespace-normal min-w-[80px] max-w-[100px] border-l border-white/20 bg-blue-700 cursor-default">
                           <span class="text-[0.6rem] leading-tight block font-bold">🩺 BP</span>
@@ -7423,29 +7435,30 @@
                         </th>`;
           return;
         }
-
-        // *** EDITABLE HEADER LOGIC ***
         const isEditable = isAdmin;
         const editableAttr = isEditable ? 'contenteditable="true"' : '';
         const blurAttr = isEditable ? 'onblur="markLayoutDirty()"' : '';
         const cursorClass = isEditable ? 'cursor-text hover:bg-white/10' : 'cursor-default';
         const titleAttr = `title="${escapeHtml(col.label || '')}"`;
-
-        const headerContent = `<span class="text-[0.6rem] leading-tight block whitespace-pre-wrap">${escapeHtml(
-          col.label || ''
-        )}</span>`;
-
+        const headerContent = `<span class="text-[0.6rem] leading-tight block whitespace-pre-wrap">${escapeHtml(col.label || '')}</span>`;
         headersHtml += `<th ${editableAttr} data-idx="${index}" ${titleAttr} ${blurAttr}
                         class="px-1 py-2 text-center align-middle whitespace-normal min-w-[50px] max-w-[70px] border-l border-white/20 ${cursorClass}">
                         ${headerContent}
                     </th>`;
       });
+
+      // Completion column header (rightmost)
+      headersHtml += `<th class="px-1 py-2 text-center align-middle whitespace-normal min-w-[70px] max-w-[90px] border-l border-white/20 bg-emerald-700 cursor-default sticky right-0 z-10">
+                        <span class="text-[0.6rem] leading-tight block font-bold">✅ Completed</span>
+                        <span class="text-[0.5rem] leading-tight block opacity-80">Time / Duration</span>
+                      </th>`;
+
       headerRow.innerHTML = headersHtml;
 
       // Build Rows
       tbody.innerHTML = '';
       if (patients.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="${columns.length + 1
+        tbody.innerHTML = `<tr><td colspan="${columns.length + 2
           }" class="p-6 text-center text-gray-400">No active patients.</td></tr>`;
         return;
       }
@@ -7529,9 +7542,18 @@
             </td>`;
         });
 
+        // *** COMPLETION COLUMN — rightmost cell ***
+        const comp = completionMap[pId];
+        const compCellHtml = buildCompletionCell(comp);
+        rowHtml += `<td class="p-1 border text-center align-middle bg-emerald-50 sticky right-0 z-10" 
+                        data-completion-cell="${pId}" style="min-width:70px;max-width:90px;">
+                      ${compCellHtml}
+                    </td>`;
+
         const tr = document.createElement('tr');
         tr.innerHTML = rowHtml;
         tr.className = 'hover:bg-gray-50 transition';
+        tr.dataset.patientRow = pId;
 
         if (hasIssue) {
           tr.classList.add('bg-rose-50', 'report-flagged-row', `report-flagged-row-${type}`);
@@ -7550,7 +7572,7 @@
       if (normalRows.length > 0) {
         const toggleRow = document.createElement('tr');
         const toggleCell = document.createElement('td');
-        toggleCell.colSpan = columns.length + 1;
+        toggleCell.colSpan = columns.length + 2; // +1 Patient, +1 Completion
         toggleCell.className = 'bg-amber-50 text-center py-3';
         const toggleBtn = document.createElement('button');
         toggleBtn.type = 'button';
@@ -7571,7 +7593,7 @@
       // All on track message (only when no flagged rows)
       if (flaggedRows.length === 0 && normalRows.length > 0) {
         const infoRow = document.createElement('tr');
-        infoRow.innerHTML = `<td colspan="${columns.length + 1
+        infoRow.innerHTML = `<td colspan="${columns.length + 2
           }" class="px-4 py-4 text-center text-sm text-teal-800 bg-teal-50 font-semibold">All patients are currently on track.</td>`;
         fragment.appendChild(infoRow);
       }
@@ -7584,7 +7606,7 @@
 
       if (flaggedRows.length === 0 && normalRows.length === 0) {
         const emptyRow = document.createElement('tr');
-        emptyRow.innerHTML = `<td colspan="${columns.length + 1
+        emptyRow.innerHTML = `<td colspan="${columns.length + 2
           }" class="p-6 text-center text-gray-400">No active patients.</td>`;
         fragment.appendChild(emptyRow);
       }
@@ -7639,6 +7661,24 @@
           : `<i class="fas fa-eye"></i> Show ${totalCount} On-Track Patients`;
       }
     };
+
+    // --- COMPLETION CELL HELPER ---
+    function buildCompletionCell(comp) {
+      if (!comp || !comp.row_completed_at) {
+        return `<span class="text-gray-300 text-[0.55rem]">—</span>`;
+      }
+      const timeStr = comp.row_completed_at;
+      let durationStr = '';
+      if (comp.duration_minutes != null) {
+        const h = Math.floor(comp.duration_minutes / 60);
+        const m = comp.duration_minutes % 60;
+        durationStr = h > 0 ? `${h}h ${m}m` : `${m}m`;
+      }
+      return `
+        <span class="block text-[0.6rem] font-bold text-emerald-700 leading-tight">${escapeHtml(timeStr)}</span>
+        ${durationStr ? `<span class="block text-[0.52rem] text-emerald-500 leading-tight">${escapeHtml(durationStr)}</span>` : ''}
+      `;
+    }
 
     // Debounce timer for auto-save
     let _autoSaveTimer = null;

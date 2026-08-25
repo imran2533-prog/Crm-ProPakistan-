@@ -3342,14 +3342,15 @@ def get_daily_report():
         return jsonify({"error": "Date required"}), 400
         
     try:
-        # Fetch all report entries for this specific date
         reports = list(mongo.db.daily_reports.find({'date': date_str}))
-        
-        # Convert ObjectId to string
         for r in reports:
             r['_id'] = str(r['_id'])
             r['patient_id'] = str(r['patient_id'])
-            
+            # Serialize completion timestamp for frontend
+            if r.get('row_completed_at') and isinstance(r['row_completed_at'], datetime):
+                r['row_completed_at'] = r['row_completed_at'].strftime('%I:%M %p').lstrip('0')
+            else:
+                r['row_completed_at'] = r.get('row_completed_at')
         return jsonify(reports)
     except Exception as e:
         print(f"Report Fetch Error: {e}")
@@ -3380,6 +3381,68 @@ def update_daily_report():
         }
         
         mongo.db.daily_reports.update_one(query, update, upsert=True)
+
+        # --- COMPLETION CHECK ---
+        # "Completed" = every DAY slot has any non-empty status.
+        # Night slots are NOT required — completion is tracked per table type.
+        # Any non-empty string (done, not_done, complaint, med, wc) counts as filled.
+        doc = mongo.db.daily_reports.find_one(query)
+        if doc:
+            schedule = doc.get('schedule', {})
+
+            # Day slots only (excludes slot_bp which is stored separately)
+            DAY_SLOTS = [
+                'slot_0800','slot_0900','slot_1000','slot_1100','slot_1200',
+                'slot_1300','slot_1400','slot_1500','slot_1600','slot_1700',
+                'slot_1800','slot_1900',
+            ]
+            NIGHT_SLOTS = [
+                'slot_2000','slot_2100','slot_2200','slot_2300',
+                'slot_0000','slot_0100','slot_0200','slot_0300',
+                'slot_0400','slot_0500','slot_0600','slot_0700',
+            ]
+
+            # A slot is "filled" if it has any non-empty string value
+            def is_filled(s):
+                v = schedule.get(s, '')
+                return bool(v and str(v).strip())
+
+            day_complete = all(is_filled(s) for s in DAY_SLOTS)
+
+            # Completion = all DAY slots filled (night is optional/separate)
+            all_complete = day_complete
+
+            now = datetime.now()
+            if all_complete and not doc.get('row_completed_at'):
+                # First time all slots are filled — record completion time
+                try:
+                    report_date = datetime.strptime(data['date'], '%Y-%m-%d')
+                    start_of_day = report_date.replace(hour=8, minute=0, second=0)
+                    duration_minutes = max(0, int((now - start_of_day).total_seconds() / 60))
+                except Exception:
+                    duration_minutes = 0
+                mongo.db.daily_reports.update_one(query, {
+                    '$set': {
+                        'row_completed_at': now,
+                        'duration_minutes': duration_minutes,
+                    }
+                })
+            elif not all_complete and doc.get('row_completed_at'):
+                # A slot was cleared after completion — remove completion mark
+                mongo.db.daily_reports.update_one(query, {
+                    '$unset': {'row_completed_at': '', 'duration_minutes': ''}
+                })
+
+            # Return completion info in response for instant UI update
+            updated_doc = mongo.db.daily_reports.find_one(query)
+            completed_at = updated_doc.get('row_completed_at') if updated_doc else None
+            duration_min = updated_doc.get('duration_minutes') if updated_doc else None
+            return jsonify({
+                "message": "Status updated",
+                "row_completed_at": completed_at.strftime('%I:%M %p').lstrip('0') if completed_at else None,
+                "duration_minutes": duration_min,
+            }), 200
+        
         return jsonify({"message": "Status updated"}), 200
         
     except Exception as e:
