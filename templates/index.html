@@ -7581,13 +7581,23 @@
       }
     };
 
+    // Debounce timer for auto-save
+    let _autoSaveTimer = null;
+
     function markLayoutDirty() {
       const btn = document.getElementById('btn-save-layout');
-      btn.classList.add('bg-yellow-500', 'animate-pulse');
-      btn.classList.remove('bg-gray-800');
+      if (btn) {
+        btn.classList.add('bg-yellow-500', 'animate-pulse');
+        btn.classList.remove('bg-gray-800');
+      }
+      // Auto-save 800ms after the user stops typing
+      clearTimeout(_autoSaveTimer);
+      _autoSaveTimer = setTimeout(() => {
+        saveLayoutConfig(true); // silent = true (no modal popup)
+      }, 800);
     }
 
-    async function saveLayoutConfig() {
+    async function saveLayoutConfig(silent = false) {
       const scrapeHeaders = (id) => {
         const ths = document.querySelectorAll(`#${id}-header-row th[data-idx]`);
         const newCols = [];
@@ -7604,6 +7614,16 @@
       const newDayConfig = scrapeHeaders('day');
       const newNightConfig = scrapeHeaders('night');
 
+      // Don't save if nothing was scraped (table not rendered yet)
+      if (!newDayConfig.length && !newNightConfig.length) return;
+
+      const btn = document.getElementById('btn-save-layout');
+      // Show saving indicator
+      if (btn) {
+        btn.classList.add('bg-yellow-500', 'animate-pulse');
+        btn.classList.remove('bg-gray-800');
+      }
+
       try {
         const res = await fetch('/api/reports/config', {
           method: 'POST',
@@ -7612,16 +7632,19 @@
         });
 
         if (res.ok) {
-          showSuccessModal('Layout Saved');
-          const btn = document.getElementById('btn-save-layout');
-          btn.classList.remove('bg-yellow-500', 'animate-pulse');
-          btn.classList.add('bg-gray-800');
-          // Update local state
+          // Update local state immediately
           DAY_CONFIG = newDayConfig;
           NIGHT_CONFIG = newNightConfig;
+          if (btn) {
+            btn.classList.remove('bg-yellow-500', 'animate-pulse');
+            btn.classList.add('bg-gray-800');
+          }
+          if (!silent) showSuccessModal('Layout Saved');
+        } else {
+          if (!silent) showSuccessModal('Error saving layout', true);
         }
       } catch (e) {
-        showSuccessModal('Error saving layout', true);
+        if (!silent) showSuccessModal('Error saving layout', true);
       }
     }
 
