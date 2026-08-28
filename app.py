@@ -3651,15 +3651,23 @@ def list_psych_sessions():
 
     # If patient_name search is active — ignore date range, search all sessions
     if patient_name_search:
-        # First find matching patient IDs
+        # Find matching patient IDs
         matching_patients = list(mongo.db.patients.find(
             {'name': {'$regex': patient_name_search, '$options': 'i'}},
             {'_id': 1}
         ))
-        matching_ids = [p['_id'] for p in matching_patients]
-        if not matching_ids:
-            return jsonify([])  # No matching patients
-        query['patient_ids'] = {'$in': matching_ids}
+        if not matching_patients:
+            return jsonify([])  # No matching patients found
+
+        # patient_ids in psych_sessions can be stored as strings OR ObjectIds
+        # Include both formats to handle either case
+        matching_obj_ids = [p['_id'] for p in matching_patients]
+        matching_str_ids = [str(p['_id']) for p in matching_patients]
+
+        query['$or'] = [
+            {'patient_ids': {'$in': matching_obj_ids}},
+            {'patient_ids': {'$in': matching_str_ids}},
+        ]
     else:
         if start_date and end_date:
             query['date'] = {'$gte': start_date, '$lt': end_date}
