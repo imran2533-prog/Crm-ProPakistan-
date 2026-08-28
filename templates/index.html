@@ -6953,18 +6953,41 @@
         .join('');
     }
 
+    // Debounce timer for patient search
+    let _psychSearchTimer = null;
+
+    window.onPsychPatientSearch = function(value) {
+      const dateFilters = document.getElementById('psych-date-filters');
+      if (value.trim()) {
+        // Hide date filters when searching by patient
+        if (dateFilters) dateFilters.style.opacity = '0.4';
+      } else {
+        if (dateFilters) dateFilters.style.opacity = '1';
+      }
+      clearTimeout(_psychSearchTimer);
+      _psychSearchTimer = setTimeout(() => loadPsychSessions(), 400);
+    };
+
     async function loadPsychSessions() {
-      const start = document.getElementById('psych-filter-start')?.value;
-      const end = document.getElementById('psych-filter-end')?.value;
+      const patientSearch = document.getElementById('psych-patient-search')?.value.trim();
       const params = new URLSearchParams();
-      if (start) params.append('start', start);
-      if (end) params.append('end', end);
+
+      if (patientSearch) {
+        // Patient search mode — ignore date range, fetch all sessions for this patient
+        params.append('patient_name', patientSearch);
+      } else {
+        // Default date-range mode
+        const start = document.getElementById('psych-filter-start')?.value;
+        const end = document.getElementById('psych-filter-end')?.value;
+        if (start) params.append('start', start);
+        if (end) params.append('end', end);
+      }
 
       try {
         const res = await fetch(`/api/psych-sessions?${params.toString()}`);
         if (!res.ok) throw new Error('fetch failed');
         psychSessions = await res.json();
-        renderPsychSessions();
+        renderPsychSessions(patientSearch);
       } catch (e) {
         console.error('Load psych sessions error', e);
         const tbody = document.getElementById('psych-sessions-body');
@@ -6973,12 +6996,15 @@
       }
     }
 
-    function renderPsychSessions() {
+    function renderPsychSessions(searchTerm = '') {
       const tbody = document.getElementById('psych-sessions-body');
       if (!tbody) return;
 
       if (!psychSessions || psychSessions.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="7" class="p-6 text-center text-gray-400">No sessions found.</td></tr>`;
+        const msg = searchTerm
+          ? `No sessions found for "<strong>${escapeHtml(searchTerm)}</strong>"`
+          : 'No sessions found.';
+        tbody.innerHTML = `<tr><td colspan="7" class="p-6 text-center text-gray-400">${msg}</td></tr>`;
         return;
       }
 
@@ -10244,12 +10270,25 @@
               <p class="text-sm text-gray-500">Assigned sessions for the selected window.</p>
             </div>
             <div class="flex items-center gap-2 flex-wrap">
-              <input type="date" id="psych-filter-start" class="border rounded px-2 py-1 text-sm w-full sm:w-auto" />
-              <input type="date" id="psych-filter-end" class="border rounded px-2 py-1 text-sm w-full sm:w-auto" />
-              <button class="bg-teal-600 text-white px-3 py-2 rounded text-sm w-full sm:w-auto"
-                onclick="loadPsychSessions()">
-                Refresh
-              </button>
+              <!-- Patient search box -->
+              <div class="relative">
+                <span class="absolute inset-y-0 left-2 flex items-center text-teal-400 pointer-events-none">
+                  <i class="fas fa-search text-xs"></i>
+                </span>
+                <input type="search" id="psych-patient-search"
+                  class="pl-7 pr-3 py-1.5 border rounded text-sm w-44 focus:ring-1 focus:ring-teal-400"
+                  placeholder="Search patient..."
+                  oninput="onPsychPatientSearch(this.value)" />
+              </div>
+              <!-- Date range filters (hidden when patient search active) -->
+              <div id="psych-date-filters" class="flex items-center gap-2 flex-wrap">
+                <input type="date" id="psych-filter-start" class="border rounded px-2 py-1 text-sm w-full sm:w-auto" />
+                <input type="date" id="psych-filter-end" class="border rounded px-2 py-1 text-sm w-full sm:w-auto" />
+                <button class="bg-teal-600 text-white px-3 py-2 rounded text-sm w-full sm:w-auto"
+                  onclick="loadPsychSessions()">
+                  Refresh
+                </button>
+              </div>
             </div>
           </div>
 

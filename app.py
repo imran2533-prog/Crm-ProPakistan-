@@ -3639,19 +3639,32 @@ def list_psych_sessions():
     start_str = request.args.get('start')
     end_str = request.args.get('end')
     psychologist_id = request.args.get('psychologistId')
+    patient_name_search = request.args.get('patient_name', '').strip().lower()
 
     start_date = _parse_iso_date(start_str) if start_str else None
     end_date = _parse_iso_date(end_str) if end_str else None
 
     if end_date:
-        # make end exclusive by moving to next day start
         end_date = end_date + timedelta(days=1)
 
     query = {}
-    if start_date and end_date:
-        query['date'] = {'$gte': start_date, '$lt': end_date}
-    elif start_date:
-        query['date'] = {'$gte': start_date}
+
+    # If patient_name search is active — ignore date range, search all sessions
+    if patient_name_search:
+        # First find matching patient IDs
+        matching_patients = list(mongo.db.patients.find(
+            {'name': {'$regex': patient_name_search, '$options': 'i'}},
+            {'_id': 1}
+        ))
+        matching_ids = [p['_id'] for p in matching_patients]
+        if not matching_ids:
+            return jsonify([])  # No matching patients
+        query['patient_ids'] = {'$in': matching_ids}
+    else:
+        if start_date and end_date:
+            query['date'] = {'$gte': start_date, '$lt': end_date}
+        elif start_date:
+            query['date'] = {'$gte': start_date}
 
     if role == 'Psychologist':
         query['psychologist_id'] = user_id
