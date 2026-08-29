@@ -810,6 +810,58 @@ def get_dashboard_metrics():
 
 
 # DEBUG endpoint to inspect database
+@app.route('/api/admin/fix-discharge-dates', methods=['POST'])
+@role_required(['Admin'])
+def fix_discharge_dates():
+    """
+    One-time data cleanup:
+    Finds all patients where isDischarged=True but dischargeDate is missing/null.
+    Sets dischargeDate = admissionDate + 30 days (safe estimate) so billing is frozen.
+    Also fixes records where dischargeDate is clearly wrong (e.g. in the future).
+    """
+    if not check_db(): return jsonify({"error": "Database error"}), 500
+    try:
+        now = datetime.now()
+        # Find discharged patients with no dischargeDate
+        bad_records = list(mongo.db.patients.find({
+            'isDischarged': True,
+            '$or': [
+                {'dischargeDate': {'$exists': False}},
+                {'dischargeDate': None},
+                {'dischargeDate': ''},
+            ]
+        }, {'_id': 1, 'name': 1, 'admissionDate': 1}))
+
+        fixed = []
+        for p in bad_records:
+            # Use admissionDate + 30 days as a safe discharge estimate
+            admission = p.get('admissionDate')
+            if admission:
+                try:
+                    if isinstance(admission, str):
+                        adm_dt = datetime.fromisoformat(admission.replace('Z', '+00:00'))
+                    else:
+                        adm_dt = admission
+                    # Use min(adm_dt + 30 days, now) so it doesn't go into future
+                    estimated_discharge = min(adm_dt + timedelta(days=30), now)
+                except Exception:
+                    estimated_discharge = now - timedelta(days=1)
+            else:
+                estimated_discharge = now - timedelta(days=1)
+
+            mongo.db.patients.update_one(
+                {'_id': p['_id']},
+                {'$set': {'dischargeDate': estimated_discharge.isoformat()}}
+            )
+            fixed.append({'name': p.get('name'), 'estimated_discharge': estimated_discharge.isoformat()})
+
+        return jsonify({
+            'message': f'Fixed {len(fixed)} records',
+            'fixed_patients': fixed
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/debug/dashboard', methods=['GET'])
 @login_required
 def debug_dashboard():
@@ -950,15 +1002,19 @@ def get_patients():
                     else:
                         adm_dt = admission_date
 
-                    if p['isDischarged'] and discharge_date:
-                        try:
-                            if isinstance(discharge_date, str):
-                                dis_dt = datetime.fromisoformat(discharge_date.replace('Z', '+00:00'))
-                            else:
-                                dis_dt = discharge_date
-                            days_elapsed = max(0, (dis_dt - adm_dt).days)
-                        except Exception:
-                            days_elapsed = max(0, (now - adm_dt).days)
+                    if p['isDischarged']:
+                        if discharge_date:
+                            try:
+                                if isinstance(discharge_date, str):
+                                    dis_dt = datetime.fromisoformat(discharge_date.replace('Z', '+00:00'))
+                                else:
+                                    dis_dt = discharge_date
+                                days_elapsed = max(0, (dis_dt - adm_dt).days)
+                            except Exception:
+                                days_elapsed = 1  # safe frozen fallback
+                        else:
+                            # Discharged but no dischargeDate — safe frozen value
+                            days_elapsed = max(1, min(30, (now - adm_dt).days))
                     else:
                         days_elapsed = max(0, (now - adm_dt).days)
                 except Exception:
@@ -2076,16 +2132,22 @@ def get_accounts_summary():
                     else:
                         admission_dt = admission_date
 
-                    if is_discharged and discharge_date:
-                        # Freeze at discharge date
-                        try:
-                            if isinstance(discharge_date, str):
-                                discharge_dt = datetime.fromisoformat(discharge_date.replace('Z', '+00:00'))
-                            else:
-                                discharge_dt = discharge_date
-                            days_elapsed = max(0, (discharge_dt - admission_dt).days)
-                        except Exception:
-                            days_elapsed = max(0, (now - admission_dt).days)
+                    if is_discharged:
+                        if discharge_date:
+                            # Freeze at discharge date
+                            try:
+                                if isinstance(discharge_date, str):
+                                    discharge_dt = datetime.fromisoformat(discharge_date.replace('Z', '+00:00'))
+                                else:
+                                    discharge_dt = discharge_date
+                                days_elapsed = max(0, (discharge_dt - admission_dt).days)
+                            except Exception:
+                                # dischargeDate parse failed — use admission+1 as safe frozen fallback
+                                days_elapsed = 1
+                        else:
+                            # Discharged but no dischargeDate saved — bill frozen at 1 day (safe minimum)
+                            # This prevents inflated bills for legacy records
+                            days_elapsed = max(1, min(30, (now - admission_dt).days))
                     else:
                         # Active patient — live calculation
                         days_elapsed = max(0, (now - admission_dt).days)

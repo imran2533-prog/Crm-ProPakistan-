@@ -4339,7 +4339,8 @@
 
           // Update KPI counters
           totalCollection += received;
-          if (balanceDue > 0) totalPending += balanceDue;
+          // TOTAL PENDING = ONLY active patients — discharged patients excluded
+          if (!isDischarged && balanceDue > 0) totalPending += balanceDue;
           if (balanceDue < 0) totalRefunds += Math.abs(balanceDue);
           if (!p.isDischarged) activeCount++;
 
