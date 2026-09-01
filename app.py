@@ -3689,6 +3689,176 @@ def _parse_iso_date(date_str):
         return None
 
 
+# ============================================================
+# GROUP THERAPY SESSIONS
+# ============================================================
+
+@app.route('/api/group-therapy/topics', methods=['GET'])
+@login_required
+def get_group_therapy_topics():
+    """Get weekly topic assignments (date range filter supported)."""
+    if not check_db(): return jsonify({"error": "Database error"}), 500
+    try:
+        start_str = request.args.get('start')
+        end_str   = request.args.get('end')
+        query = {}
+        if start_str:
+            s = _parse_iso_date(start_str)
+            if s: query.setdefault('date', {})['$gte'] = s
+        if end_str:
+            e = _parse_iso_date(end_str)
+            if e:
+                e = e + timedelta(days=1)
+                query.setdefault('date', {})['$lt'] = e
+        topics = list(mongo.db.group_therapy_topics.find(query).sort('date', 1))
+        result = []
+        for t in topics:
+            result.append({
+                '_id': str(t['_id']),
+                'date': t['date'].strftime('%Y-%m-%d') if t.get('date') else '',
+                'assigned_topic': t.get('assigned_topic', ''),
+                'created_by': t.get('created_by', ''),
+                'created_at': t['created_at'].isoformat() if t.get('created_at') else '',
+            })
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/group-therapy/topics', methods=['POST'])
+@role_required(['Admin'])
+def save_group_therapy_topic():
+    """Assign a topic for a specific date (upsert — one topic per date)."""
+    if not check_db(): return jsonify({"error": "Database error"}), 500
+    data = clean_input_data(request.json)
+    date_str = data.get('date')
+    topic    = data.get('assigned_topic', '').strip()
+    if not date_str or not topic:
+        return jsonify({"error": "date and assigned_topic required"}), 400
+    date_val = _parse_iso_date(date_str)
+    if not date_val:
+        return jsonify({"error": "Invalid date"}), 400
+    date_val = date_val.replace(hour=0, minute=0, second=0, microsecond=0)
+    try:
+        mongo.db.group_therapy_topics.update_one(
+            {'date': date_val},
+            {'$set': {
+                'assigned_topic': topic,
+                'created_by': session.get('username'),
+                'created_at': datetime.now(),
+            }},
+            upsert=True
+        )
+        return jsonify({"message": "Topic saved"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/group-therapy/sessions', methods=['GET'])
+@login_required
+def get_group_therapy_sessions():
+    """Get group therapy sessions with date range filter."""
+    if not check_db(): return jsonify({"error": "Database error"}), 500
+    try:
+        start_str = request.args.get('start')
+        end_str   = request.args.get('end')
+        query = {}
+        if start_str:
+            s = _parse_iso_date(start_str)
+            if s: query.setdefault('date', {})['$gte'] = s
+        if end_str:
+            e = _parse_iso_date(end_str)
+            if e:
+                e = e + timedelta(days=1)
+                query.setdefault('date', {})['$lt'] = e
+
+        sessions = list(mongo.db.group_therapy_sessions.find(query).sort('date', -1))
+
+        # Build psychologist name map
+        psych_ids = {s.get('psychologist_id') for s in sessions if s.get('psychologist_id')}
+        psych_map = {}
+        if psych_ids:
+            users = mongo.db.users.find({"_id": {"$in": [
+                ObjectId(pid) for pid in psych_ids if ObjectId.is_valid(str(pid))
+            ]}})
+            for u in users:
+                psych_map[str(u['_id'])] = u.get('name', u.get('username', 'Psych'))
+
+        result = []
+        for s in sessions:
+            result.append({
+                '_id': str(s['_id']),
+                'date': s['date'].strftime('%Y-%m-%d') if s.get('date') else '',
+                'time_slot': s.get('time_slot', ''),
+                'psychologist_id': s.get('psychologist_id', ''),
+                'psychologist_name': psych_map.get(str(s.get('psychologist_id', '')), s.get('psychologist_id', '')),
+                'assigned_topic': s.get('assigned_topic', ''),
+                'actual_topic': s.get('actual_topic', ''),
+                'topic_followed': s.get('topic_followed', True),
+                'summary': s.get('summary', ''),
+                'created_by': s.get('created_by', ''),
+                'created_at': s['created_at'].isoformat() if s.get('created_at') else '',
+                'updated_at': s['updated_at'].isoformat() if s.get('updated_at') else '',
+            })
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/group-therapy/sessions', methods=['POST'])
+@role_required(['Admin', 'Psychologist'])
+def save_group_therapy_session():
+    """Create or update a group therapy session entry for a date."""
+    if not check_db(): return jsonify({"error": "Database error"}), 500
+    data = clean_input_data(request.json)
+    date_str = data.get('date')
+    if not date_str:
+        return jsonify({"error": "date required"}), 400
+    date_val = _parse_iso_date(date_str)
+    if not date_val:
+        return jsonify({"error": "Invalid date"}), 400
+    date_val = date_val.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    psychologist_id = data.get('psychologist_id') or session.get('user_id')
+    topic_followed  = data.get('topic_followed', True)
+    if isinstance(topic_followed, str):
+        topic_followed = topic_followed.lower() not in ('false', '0', 'no')
+
+    try:
+        set_doc = {
+            'date': date_val,
+            'time_slot':      data.get('time_slot', ''),
+            'psychologist_id': psychologist_id,
+            'assigned_topic': data.get('assigned_topic', ''),
+            'actual_topic':   data.get('actual_topic', ''),
+            'topic_followed': topic_followed,
+            'summary':        data.get('summary', ''),
+            'updated_by':     session.get('username'),
+            'updated_at':     datetime.now(),
+        }
+        # On insert also set created_by
+        insert_doc = {**set_doc, 'created_by': session.get('username'), 'created_at': datetime.now()}
+
+        existing = mongo.db.group_therapy_sessions.find_one({'date': date_val})
+        if existing:
+            mongo.db.group_therapy_sessions.update_one(
+                {'date': date_val}, {'$set': set_doc}
+            )
+            return jsonify({"message": "Session updated", "id": str(existing['_id'])})
+        else:
+            res = mongo.db.group_therapy_sessions.insert_one(insert_doc)
+            return jsonify({"message": "Session saved", "id": str(res.inserted_id)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/group-therapy/sessions/<session_id>', methods=['DELETE'])
+@role_required(['Admin'])
+def delete_group_therapy_session(session_id):
+    if not check_db(): return jsonify({"error": "Database error"}), 500
+    try:
+        mongo.db.group_therapy_sessions.delete_one({'_id': ObjectId(session_id)})
+        return jsonify({"message": "Deleted"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/api/psych-sessions', methods=['GET'])
 @login_required
 def list_psych_sessions():

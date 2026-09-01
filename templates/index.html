@@ -7067,6 +7067,219 @@
         .join('');
     }
 
+    // --- GROUP THERAPY ---
+    let groupTherapySessions = [];
+    let groupTherapyTopics   = [];
+
+    // Tab switcher
+    window.switchPsychTab = function(tab) {
+      document.getElementById('psych-tab-individual').classList.toggle('hidden', tab !== 'individual');
+      document.getElementById('psych-tab-group').classList.toggle('hidden', tab !== 'group');
+      document.getElementById('tab-btn-individual').className = tab === 'individual'
+        ? 'px-4 py-2 text-sm font-bold rounded-t-lg border-b-2 border-teal-600 text-teal-700 bg-teal-50'
+        : 'px-4 py-2 text-sm font-bold rounded-t-lg border-b-2 border-transparent text-gray-500 hover:text-teal-600';
+      document.getElementById('tab-btn-group').className = tab === 'group'
+        ? 'px-4 py-2 text-sm font-bold rounded-t-lg border-b-2 border-teal-600 text-teal-700 bg-teal-50'
+        : 'px-4 py-2 text-sm font-bold rounded-t-lg border-b-2 border-transparent text-gray-500 hover:text-teal-600';
+      if (tab === 'group') initGroupTherapy();
+    };
+
+    async function initGroupTherapy() {
+      const isAdmin = currentUser.role === 'Admin';
+      const isPsych = currentUser.role === 'Psychologist';
+
+      // Show topic card only to admin
+      const topicCard = document.getElementById('gt-topic-card');
+      if (topicCard) topicCard.classList.toggle('hidden', !isAdmin);
+
+      // Populate psychologist dropdown (admin sees all, psychologist sees only self)
+      const psychSelect = document.getElementById('gt-session-psychologist');
+      if (psychSelect) {
+        if (isAdmin) {
+          const origSelect = document.getElementById('psych-session-psychologist');
+          if (origSelect) {
+            psychSelect.innerHTML = origSelect.innerHTML;
+          } else {
+            try {
+              const res = await fetch('/api/users');
+              if (res.ok) {
+                const users = await res.json();
+                psychSelect.innerHTML = users
+                  .filter(u => u.role === 'Psychologist')
+                  .map(u => `<option value="${u._id}">${escapeHtml(u.name || u.username)}</option>`)
+                  .join('');
+              }
+            } catch(_) {}
+          }
+        } else if (isPsych) {
+          // Psychologist only sees themselves
+          psychSelect.innerHTML = `<option value="${currentUser.user_id}">${escapeHtml(currentUser.name || currentUser.username)}</option>`;
+          document.getElementById('gt-psychologist-row')?.classList.add('hidden');
+        }
+      }
+
+      // Set default dates
+      const today = new Date().toISOString().split('T')[0];
+      const weekAgo = new Date(Date.now() - 6*24*60*60*1000).toISOString().split('T')[0];
+      if (document.getElementById('gt-topic-date')) document.getElementById('gt-topic-date').value = today;
+      if (document.getElementById('gt-session-date')) {
+        document.getElementById('gt-session-date').value = today;
+        // Auto-fill assigned topic for today
+        loadAssignedTopicForDate(today);
+      }
+      if (document.getElementById('gt-filter-start')) document.getElementById('gt-filter-start').value = weekAgo;
+      if (document.getElementById('gt-filter-end')) document.getElementById('gt-filter-end').value = today;
+
+      // Listen for date change to auto-load assigned topic
+      document.getElementById('gt-session-date')?.addEventListener('change', function() {
+        loadAssignedTopicForDate(this.value);
+      });
+
+      await loadGroupTherapySessions();
+    }
+
+    async function loadAssignedTopicForDate(dateStr) {
+      try {
+        const res = await fetch(`/api/group-therapy/topics?start=${dateStr}&end=${dateStr}`);
+        if (res.ok) {
+          const topics = await res.json();
+          const field = document.getElementById('gt-session-assigned-topic');
+          if (field) field.value = topics.length ? topics[0].assigned_topic : '';
+        }
+      } catch(_) {}
+    }
+
+    async function loadGroupTherapySessions() {
+      const start = document.getElementById('gt-filter-start')?.value;
+      const end   = document.getElementById('gt-filter-end')?.value;
+      const params = new URLSearchParams();
+      if (start) params.append('start', start);
+      if (end)   params.append('end', end);
+      try {
+        const res = await fetch(`/api/group-therapy/sessions?${params.toString()}`);
+        if (res.ok) groupTherapySessions = await res.json();
+        renderGroupTherapySessions();
+      } catch(e) {
+        document.getElementById('gt-sessions-body').innerHTML =
+          `<tr><td colspan="7" class="p-4 text-center text-red-500">Load error</td></tr>`;
+      }
+    }
+
+    function renderGroupTherapySessions() {
+      const tbody = document.getElementById('gt-sessions-body');
+      if (!tbody) return;
+      const isAdmin = currentUser.role === 'Admin';
+
+      if (!groupTherapySessions.length) {
+        tbody.innerHTML = `<tr><td colspan="7" class="p-6 text-center text-gray-400">No group therapy sessions found.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = groupTherapySessions.map(s => {
+        const followed = s.topic_followed !== false;
+        const statusBadge = followed
+          ? `<span class="inline-flex items-center gap-1 text-xs font-bold text-teal-700 bg-teal-50 border border-teal-200 rounded-full px-2 py-0.5">✅ Followed</span>`
+          : `<span class="inline-flex items-center gap-1 text-xs font-bold text-red-600 bg-red-50 border border-red-200 rounded-full px-2 py-0.5">❌ Different</span>`;
+
+        const actualTopic = !followed && s.actual_topic
+          ? `<div class="text-xs text-red-600 font-semibold mt-1">Actual: ${escapeHtml(s.actual_topic)}</div>`
+          : '';
+        const summary = s.summary
+          ? `<div class="text-xs text-gray-600 mt-1 max-w-xs line-clamp-2">${escapeHtml(s.summary)}</div>`
+          : '<span class="text-gray-300 text-xs">—</span>';
+
+        const deletBtn = isAdmin
+          ? `<button onclick="deleteGroupSession('${s._id}')" class="text-xs bg-red-50 text-red-600 border border-red-200 rounded px-2 py-0.5 hover:bg-red-100">🗑️</button>`
+          : '';
+
+        return `
+          <tr class="hover:bg-teal-50">
+            <td class="px-3 py-2 whitespace-nowrap font-semibold text-gray-700">${s.date}</td>
+            <td class="px-3 py-2 text-gray-500 text-xs">${escapeHtml(s.time_slot || '—')}</td>
+            <td class="px-3 py-2 text-xs">${escapeHtml(s.psychologist_name || s.psychologist_id || '—')}</td>
+            <td class="px-3 py-2 text-xs font-semibold text-teal-700">${escapeHtml(s.assigned_topic || '—')}</td>
+            <td class="px-3 py-2 text-center">${statusBadge}</td>
+            <td class="px-3 py-2">${actualTopic}${summary}</td>
+            <td class="px-3 py-2 text-center">${deletBtn}</td>
+          </tr>`;
+      }).join('');
+    }
+
+    window.toggleActualTopic = function() {
+      const isDifferent = document.querySelector('input[name="gt-topic-followed"]:checked')?.value === 'false';
+      document.getElementById('gt-actual-topic-row')?.classList.toggle('hidden', !isDifferent);
+    };
+
+    window.submitGroupTopic = async function(e) {
+      e.preventDefault();
+      const date  = document.getElementById('gt-topic-date').value;
+      const topic = document.getElementById('gt-topic-text').value.trim();
+      if (!date || !topic) return;
+      try {
+        const res = await fetch('/api/group-therapy/topics', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({date, assigned_topic: topic}),
+        });
+        if (res.ok) {
+          showSuccessModal('Topic assigned!');
+          document.getElementById('gt-topic-text').value = '';
+          // If session date matches, auto-update the session assigned topic field
+          const sessionDate = document.getElementById('gt-session-date')?.value;
+          if (sessionDate === date) {
+            const field = document.getElementById('gt-session-assigned-topic');
+            if (field) field.value = topic;
+          }
+        } else {
+          const err = await res.json();
+          showSuccessModal(err.error || 'Error', true);
+        }
+      } catch(e) { showSuccessModal('Network error', true); }
+    };
+
+    window.submitGroupSession = async function(e) {
+      e.preventDefault();
+      const date          = document.getElementById('gt-session-date').value;
+      const time_slot     = document.getElementById('gt-session-time').value;
+      const psychologist_id = document.getElementById('gt-session-psychologist').value;
+      const assigned_topic  = document.getElementById('gt-session-assigned-topic').value;
+      const topic_followed  = document.querySelector('input[name="gt-topic-followed"]:checked')?.value !== 'false';
+      const actual_topic    = document.getElementById('gt-session-actual-topic').value;
+      const summary         = document.getElementById('gt-session-summary').value;
+
+      if (!date) { showSuccessModal('Date is required', true); return; }
+
+      try {
+        const res = await fetch('/api/group-therapy/sessions', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({date, time_slot, psychologist_id, assigned_topic,
+                                topic_followed, actual_topic, summary}),
+        });
+        if (res.ok) {
+          showSuccessModal('Session saved!');
+          document.getElementById('gt-session-form').reset();
+          document.getElementById('gt-session-date').value = date;
+          document.getElementById('gt-actual-topic-row')?.classList.add('hidden');
+          document.querySelector('input[name="gt-topic-followed"][value="true"]').checked = true;
+          await loadAssignedTopicForDate(date);
+          await loadGroupTherapySessions();
+        } else {
+          const err = await res.json();
+          showSuccessModal(err.error || 'Error saving', true);
+        }
+      } catch(e) { showSuccessModal('Network error', true); }
+    };
+
+    window.deleteGroupSession = async function(sessionId) {
+      if (!confirm('Delete this group therapy session?')) return;
+      try {
+        const res = await fetch(`/api/group-therapy/sessions/${sessionId}`, {method: 'DELETE'});
+        if (res.ok) { showSuccessModal('Deleted'); loadGroupTherapySessions(); }
+        else { showSuccessModal('Delete failed', true); }
+      } catch(e) { showSuccessModal('Network error', true); }
+    };
+
     // --- DELETE PSYCH SESSION ---
     window.deletePsychSession = async function(sessionId) {
       if (!confirm('Kya aap is session ko permanently delete karna chahte hain?')) return;
@@ -10226,7 +10439,21 @@
     </section>
 
     <section id="psych-sessions-view" class="view-section hidden p-4 md:p-8">
-      <div class="flex flex-col lg:flex-row gap-6">
+
+      <!-- ===== TABS ===== -->
+      <div class="flex gap-2 mb-5 border-b border-teal-100">
+        <button id="tab-btn-individual" onclick="switchPsychTab('individual')"
+          class="px-4 py-2 text-sm font-bold rounded-t-lg border-b-2 border-teal-600 text-teal-700 bg-teal-50">
+          🧠 Individual Sessions
+        </button>
+        <button id="tab-btn-group" onclick="switchPsychTab('group')"
+          class="px-4 py-2 text-sm font-bold rounded-t-lg border-b-2 border-transparent text-gray-500 hover:text-teal-600">
+          👥 Group Therapy
+        </button>
+      </div>
+
+      <!-- ===== INDIVIDUAL SESSIONS PANEL ===== -->
+      <div id="psych-tab-individual" class="flex flex-col lg:flex-row gap-6">
         <div id="psych-assign-card" class="lg:w-1/3 bg-white p-5 rounded-xl shadow-sm border border-teal-100 hidden">
           <h3 class="text-lg font-bold mb-3 text-teal-800 flex items-center gap-2">
             <i class="fas fa-calendar-plus"></i> Assign Sessions (Admin)
@@ -10315,9 +10542,131 @@
           </div>
         </div>
       </div>
-    </section>
+      </div><!-- end psych-tab-individual -->
 
-    <!-- Edit Psych Session Modal -->
+      <!-- ===== GROUP THERAPY PANEL ===== -->
+      <div id="psych-tab-group" class="hidden flex flex-col lg:flex-row gap-6">
+
+        <!-- LEFT: Topic Assignment + Session Entry -->
+        <div class="lg:w-2/5 flex flex-col gap-4">
+
+          <!-- Topic Assignment Card (Admin only) -->
+          <div id="gt-topic-card" class="hidden bg-white p-5 rounded-xl shadow-sm border border-teal-100">
+            <h3 class="text-base font-bold text-teal-800 mb-3 flex items-center gap-2">
+              <i class="fas fa-calendar-week"></i> Topic Assignment (Admin)
+            </h3>
+            <form id="gt-topic-form" class="space-y-3" onsubmit="submitGroupTopic(event)">
+              <div>
+                <label class="text-xs font-semibold text-gray-600">Date</label>
+                <input type="date" id="gt-topic-date" class="w-full border rounded px-3 py-2" required />
+              </div>
+              <div>
+                <label class="text-xs font-semibold text-gray-600">Assigned Topic</label>
+                <input type="text" id="gt-topic-text" class="w-full border rounded px-3 py-2"
+                  placeholder="e.g. Anger Management, Mindfulness..." required />
+              </div>
+              <button type="submit"
+                class="w-full bg-teal-600 text-white py-2 rounded-lg font-semibold hover:bg-teal-700">
+                Assign Topic
+              </button>
+            </form>
+          </div>
+
+          <!-- Session Entry Card (Psychologist + Admin) -->
+          <div class="bg-white p-5 rounded-xl shadow-sm border border-purple-100">
+            <h3 class="text-base font-bold text-purple-800 mb-3 flex items-center gap-2">
+              <i class="fas fa-pen-alt"></i> Session Entry
+            </h3>
+            <form id="gt-session-form" class="space-y-3" onsubmit="submitGroupSession(event)">
+              <div>
+                <label class="text-xs font-semibold text-gray-600">Date</label>
+                <input type="date" id="gt-session-date" class="w-full border rounded px-3 py-2" required />
+              </div>
+              <div>
+                <label class="text-xs font-semibold text-gray-600">Time Slot</label>
+                <input type="text" id="gt-session-time" class="w-full border rounded px-3 py-2"
+                  placeholder="e.g. 11:00 AM - 12:00 PM" />
+              </div>
+              <div id="gt-psychologist-row">
+                <label class="text-xs font-semibold text-gray-600">Psychologist (Conducted By)</label>
+                <select id="gt-session-psychologist" class="w-full border rounded px-3 py-2"></select>
+              </div>
+              <div>
+                <label class="text-xs font-semibold text-gray-600">Assigned Topic <span class="text-gray-400">(auto-filled)</span></label>
+                <input type="text" id="gt-session-assigned-topic" class="w-full border rounded px-3 py-2 bg-gray-50"
+                  placeholder="Will load from assignment..." readonly />
+              </div>
+              <!-- Tick/Cross: Was assigned topic followed? -->
+              <div class="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                <label class="text-xs font-semibold text-gray-600 block mb-2">Topic Status</label>
+                <div class="flex gap-4">
+                  <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="radio" name="gt-topic-followed" value="true" checked
+                      class="text-teal-600" onchange="toggleActualTopic()" />
+                    <span class="text-sm font-semibold text-teal-700">✅ Assigned Topic Followed</span>
+                  </label>
+                  <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="radio" name="gt-topic-followed" value="false"
+                      class="text-red-500" onchange="toggleActualTopic()" />
+                    <span class="text-sm font-semibold text-red-600">❌ Different Topic</span>
+                  </label>
+                </div>
+              </div>
+              <!-- Actual topic — shown only if "Different Topic" selected -->
+              <div id="gt-actual-topic-row" class="hidden">
+                <label class="text-xs font-semibold text-gray-600">Actual Topic Covered</label>
+                <input type="text" id="gt-session-actual-topic" class="w-full border border-red-300 rounded px-3 py-2"
+                  placeholder="What topic was actually covered?" />
+              </div>
+              <div>
+                <label class="text-xs font-semibold text-gray-600">Session Summary</label>
+                <textarea id="gt-session-summary" rows="4" class="w-full border rounded px-3 py-2 text-sm"
+                  placeholder="Aaj ke session mein kya cover kiya? Patients ki response, key points..."></textarea>
+              </div>
+              <button type="submit"
+                class="w-full bg-purple-600 text-white py-2 rounded-lg font-semibold hover:bg-purple-700">
+                Save Session
+              </button>
+            </form>
+          </div>
+        </div>
+
+        <!-- RIGHT: Sessions Table -->
+        <div class="flex-1 bg-white p-5 rounded-xl shadow-sm border border-teal-100">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+            <div>
+              <h3 class="text-xl font-bold text-teal-900">Group Therapy Log</h3>
+              <p class="text-sm text-gray-500">Daily group sessions record.</p>
+            </div>
+            <div class="flex items-center gap-2 flex-wrap">
+              <input type="date" id="gt-filter-start" class="border rounded px-2 py-1 text-sm" />
+              <input type="date" id="gt-filter-end" class="border rounded px-2 py-1 text-sm" />
+              <button onclick="loadGroupTherapySessions()"
+                class="bg-teal-600 text-white px-3 py-2 rounded text-sm">Refresh</button>
+            </div>
+          </div>
+          <div class="overflow-x-auto" style="max-height:32rem;overflow-y:auto;">
+            <table class="min-w-full divide-y divide-teal-100 text-sm">
+              <thead class="bg-teal-600 text-white sticky top-0">
+                <tr>
+                  <th class="px-3 py-2 text-left">Date</th>
+                  <th class="px-3 py-2 text-left">Time</th>
+                  <th class="px-3 py-2 text-left">Psychologist</th>
+                  <th class="px-3 py-2 text-left">Assigned Topic</th>
+                  <th class="px-3 py-2 text-center">Status</th>
+                  <th class="px-3 py-2 text-left">Actual Topic / Summary</th>
+                  <th class="px-3 py-2 text-center">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="gt-sessions-body" class="divide-y divide-teal-50">
+                <tr><td colspan="7" class="p-6 text-center text-gray-400">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div><!-- end psych-tab-group -->
+
+    </section>
     <div id="edit-psych-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
       <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
         <div class="flex justify-between items-center mb-4">
