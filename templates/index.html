@@ -7042,11 +7042,11 @@
             <div class="flex flex-col gap-1 mt-1">
               <button onclick="editPsychSession('${s._id}')"
                 class="text-xs bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 rounded px-2 py-0.5 font-semibold">
-                ✏️ Edit
+                Edit
               </button>
               <button onclick="deletePsychSession('${s._id}')"
                 class="text-xs bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 rounded px-2 py-0.5 font-semibold">
-                🗑️ Delete
+                Delete
               </button>
             </div>` : '';
 
@@ -7178,8 +7178,8 @@
       tbody.innerHTML = groupTherapySessions.map(s => {
         const followed = s.topic_followed !== false;
         const statusBadge = followed
-          ? `<span class="inline-flex items-center gap-1 text-xs font-bold text-teal-700 bg-teal-50 border border-teal-200 rounded-full px-2 py-0.5">✅ Followed</span>`
-          : `<span class="inline-flex items-center gap-1 text-xs font-bold text-red-600 bg-red-50 border border-red-200 rounded-full px-2 py-0.5">❌ Different</span>`;
+          ? `<span class="inline-flex items-center text-xs font-bold text-teal-700 bg-teal-50 border border-teal-200 rounded-full px-2 py-0.5">Followed</span>`
+          : `<span class="inline-flex items-center text-xs font-bold text-red-600 bg-red-50 border border-red-200 rounded-full px-2 py-0.5">Different</span>`;
 
         const actualTopic = !followed && s.actual_topic
           ? `<div class="text-xs text-red-600 font-semibold mt-1">Actual: ${escapeHtml(s.actual_topic)}</div>`
@@ -7189,7 +7189,7 @@
           : '<span class="text-gray-300 text-xs">—</span>';
 
         const deletBtn = isAdmin
-          ? `<button onclick="deleteGroupSession('${s._id}')" class="text-xs bg-red-50 text-red-600 border border-red-200 rounded px-2 py-0.5 hover:bg-red-100">🗑️</button>`
+          ? `<button onclick="deleteGroupSession('${s._id}')" class="text-xs bg-red-50 text-red-600 border border-red-200 rounded px-2 py-0.5 hover:bg-red-100">Delete</button>`
           : '';
 
         return `
@@ -10444,11 +10444,11 @@
       <div class="flex gap-2 mb-5 border-b border-teal-100">
         <button id="tab-btn-individual" onclick="switchPsychTab('individual')"
           class="px-4 py-2 text-sm font-bold rounded-t-lg border-b-2 border-teal-600 text-teal-700 bg-teal-50">
-          🧠 Individual Sessions
+          Individual Sessions
         </button>
         <button id="tab-btn-group" onclick="switchPsychTab('group')"
           class="px-4 py-2 text-sm font-bold rounded-t-lg border-b-2 border-transparent text-gray-500 hover:text-teal-600">
-          👥 Group Therapy
+          Group Therapy
         </button>
       </div>
 
@@ -10603,12 +10603,12 @@
                   <label class="flex items-center gap-2 cursor-pointer">
                     <input type="radio" name="gt-topic-followed" value="true" checked
                       class="text-teal-600" onchange="toggleActualTopic()" />
-                    <span class="text-sm font-semibold text-teal-700">✅ Assigned Topic Followed</span>
+                    <span class="text-sm font-semibold text-teal-700">Assigned Topic Followed</span>
                   </label>
                   <label class="flex items-center gap-2 cursor-pointer">
                     <input type="radio" name="gt-topic-followed" value="false"
                       class="text-red-500" onchange="toggleActualTopic()" />
-                    <span class="text-sm font-semibold text-red-600">❌ Different Topic</span>
+                    <span class="text-sm font-semibold text-red-600">Different Topic</span>
                   </label>
                 </div>
               </div>
