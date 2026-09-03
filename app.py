@@ -2221,8 +2221,8 @@ def add_call_meeting_entry():
         return jsonify({"error": "Missing fields"}), 400
     
     status_value = data.get('status') or data.get('type') or 'Meeting'
-    if status_value not in ['Meeting', 'Call']:
-        return jsonify({"error": "Type must be Meeting or Call"}), 400
+    if status_value not in ['Meeting', 'Call', 'VN']:
+        return jsonify({"error": "Type must be Meeting, Call or VN"}), 400
     
     try:
         entry = {

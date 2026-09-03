@@ -2840,77 +2840,87 @@
       const todayDay = today.getDate();
       const isCurrentMonth = today.getFullYear() === year && today.getMonth() + 1 === month;
 
-      // Build headers
+      // Build headers: Name col + day columns (1-31)
       let headersHtml = `<th class="px-3 py-2 text-left whitespace-nowrap sticky left-0 z-20 shadow-md bg-teal-600 text-white call-meeting-name-col">
-                            <span class="font-semibold tracking-wide text-sm">Name</span>
+                            <span class="font-semibold tracking-wide text-sm">Patient</span>
                           </th>`;
       for (let day = 1; day <= daysInMonth; day++) {
         const isTodayCol = isCurrentMonth && day === todayDay;
-        headersHtml += `<th class="px-1 py-2 text-center whitespace-nowrap text-[11px] font-semibold border-l border-white/20 call-meeting-day-header ${isTodayCol ? 'call-meeting-today' : ''
-          }">${day}</th>`;
+        headersHtml += `<th class="px-1 py-2 text-center whitespace-nowrap text-[11px] font-semibold border-l border-white/20 call-meeting-day-header ${isTodayCol ? 'call-meeting-today' : ''}">${day}</th>`;
       }
       headerRow.innerHTML = headersHtml;
 
-      // Group records by name
+      // Build a lookup: name -> { day -> { id, status } }
       callMeetingMeta = {};
-      const groupedByName = {};
+      const entryMap = {};
       (records || []).forEach((r) => {
-        if (!groupedByName[r.name]) {
-          groupedByName[r.name] = {
-            name: r.name,
-            date_of_admission: r.date_of_admission,
-            days: {},
-          };
+        if (!entryMap[r.name]) entryMap[r.name] = {};
+        entryMap[r.name][r.day] = { id: r._id, status: r.status || r.type || 'Meeting' };
+        if (!callMeetingMeta[r.name]) {
+          callMeetingMeta[r.name] = { date_of_admission: r.date_of_admission, days: {} };
         }
-        groupedByName[r.name].days[r.day] = {
-          id: r._id,
-          status: r.status || r.type || 'Meeting',
-        };
+        callMeetingMeta[r.name].days[r.day] = { id: r._id, status: r.status || r.type || 'Meeting' };
       });
 
-      const names = Object.keys(groupedByName);
-      if (!names.length) {
-        tbody.innerHTML = `<tr><td colspan="${daysInMonth + 1
-          }" class="p-6 text-center text-gray-400">No entries for this month.</td></tr>`;
+      // Get active patients list — same as Day Report
+      const activePatients = (typeof patientsData !== 'undefined' ? patientsData : [])
+        .filter(p => !p.isDischarged)
+        .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+      // Also include any names that exist in records but not in patientsData (legacy)
+      const activePatientsNames = new Set(activePatients.map(p => p.name));
+      const legacyNames = Object.keys(entryMap).filter(n => !activePatientsNames.has(n));
+
+      const allRows = [
+        ...activePatients.map(p => ({ name: p.name, admissionDate: p.admissionDate })),
+        ...legacyNames.map(n => ({ name: n, admissionDate: (entryMap[n] && Object.values(entryMap[n])[0]?.date_of_admission) || '' }))
+      ];
+
+      if (!allRows.length) {
+        tbody.innerHTML = `<tr><td colspan="${daysInMonth + 1}" class="p-6 text-center text-gray-400">No active patients found.</td></tr>`;
         return;
       }
 
-      const rows = names
-        .map((name) => {
-          const person = groupedByName[name];
-          callMeetingMeta[name] = {
-            date_of_admission: person.date_of_admission,
-            days: person.days,
-          };
-          let rowHtml = `<td class="px-3 py-2 font-bold text-teal-900 bg-teal-50 sticky left-0 border-r z-20 whitespace-nowrap text-xs md:text-sm call-meeting-name-col">
-                            <span class="block truncate">${escapeHtml(person.name)}</span>
-                           </td>`;
+      // Cell status helpers
+      const getCellLabel = (status) => {
+        if (status === 'Meeting') return 'M';
+        if (status === 'Call')    return 'C';
+        if (status === 'VN')      return 'VN';
+        return '';
+      };
+      const getCellClass = (status) => {
+        if (status === 'Meeting') return 'bg-teal-100 border border-teal-500 text-teal-800 font-bold';
+        if (status === 'Call')    return 'bg-blue-100 border border-blue-400 text-blue-800 font-bold';
+        if (status === 'VN')      return 'bg-purple-100 border border-purple-400 text-purple-800 font-bold';
+        return 'bg-gray-50';
+      };
 
-          for (let day = 1; day <= daysInMonth; day++) {
-            const dayData = person.days[day];
-            const hasEntry = !!dayData;
-            const isTodayCol = isCurrentMonth && day === todayDay;
-            const cellBadge = hasEntry
-              ? '<i class="fas fa-check text-teal-700 text-xs"></i>'
-              : '';
-            const cellClass = hasEntry ? 'bg-teal-50 border border-teal-500' : 'bg-gray-50';
+      const rows = allRows.map(({ name, admissionDate }) => {
+        if (!callMeetingMeta[name]) {
+          callMeetingMeta[name] = { date_of_admission: admissionDate, days: {} };
+        }
 
-            rowHtml += `<td class="p-1 border text-center align-middle call-meeting-day-cell ${isTodayCol ? 'call-meeting-today' : ''
-              }">
-                            <button class="w-full h-7 rounded flex items-center justify-center text-[11px] ${cellClass} ${isTodayCol ? 'call-meeting-today-button' : ''
-              }"
-                                    onclick="toggleCallMeeting('${encodeURIComponent(
-                person.name
-              )}', ${day})"
-                                    title="${hasEntry ? 'Remove entry' : 'Add entry'}">
-                              ${cellBadge}
-                            </button>
-                          </td>`;
-          }
+        let rowHtml = `<td class="px-3 py-2 font-bold text-teal-900 bg-teal-50 sticky left-0 border-r z-20 whitespace-nowrap text-xs md:text-sm call-meeting-name-col">
+                          <span class="block truncate" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
+                       </td>`;
 
-          return `<tr class="hover:bg-gray-50 transition">${rowHtml}</tr>`;
-        })
-        .join('');
+        for (let day = 1; day <= daysInMonth; day++) {
+          const dayData = callMeetingMeta[name]?.days[day];
+          const status = dayData?.status || '';
+          const isTodayCol = isCurrentMonth && day === todayDay;
+          const cellClass = getCellClass(status);
+          const label = getCellLabel(status);
+
+          rowHtml += `<td class="p-0.5 border text-center align-middle call-meeting-day-cell ${isTodayCol ? 'call-meeting-today' : ''}">
+                        <button class="w-full h-7 rounded flex items-center justify-center text-[10px] ${cellClass} ${isTodayCol && !status ? 'call-meeting-today-button' : ''}"
+                                onclick="cycleCMStatus('${encodeURIComponent(name)}', ${day}, '${status}')"
+                                title="${status || 'Click to set'}">
+                          ${label}
+                        </button>
+                      </td>`;
+        }
+        return `<tr class="hover:bg-gray-50 transition">${rowHtml}</tr>`;
+      }).join('');
 
       tbody.innerHTML = rows;
     }
@@ -3062,6 +3072,12 @@
     };
 
     window.toggleCallMeeting = async function (encodedName, day) {
+      // Legacy wrapper — redirect to cycleCMStatus with empty current status
+      await window.cycleCMStatus(encodedName, day, '');
+    };
+
+    // Cycle: empty -> Meeting -> Call -> VN -> empty
+    window.cycleCMStatus = async function (encodedName, day, currentStatus) {
       const name = decodeURIComponent(encodedName);
       const monthInput = document.getElementById('call-meeting-month');
       const today = new Date();
@@ -3073,35 +3089,38 @@
       const month = parseInt(monthStr, 10);
       const year = parseInt(yearStr, 10);
 
-      const meta = callMeetingMeta[name] || { days: {} };
+      const meta = callMeetingMeta[name] || { date_of_admission: '', days: {} };
       const existing = meta.days[day];
       const admissionDate = meta.date_of_admission || '';
 
+      // Determine next status in cycle
+      const cycle = ['Meeting', 'Call', 'VN', ''];
+      const currentIdx = cycle.indexOf(currentStatus);
+      const nextStatus = cycle[(currentIdx + 1) % cycle.length];
+
       try {
-        if (existing && existing.id) {
-          const delRes = await fetch(`/api/call_meeting_tracker/${existing.id}`, {
-            method: 'DELETE',
-          });
-          if (!delRes.ok) throw new Error('Delete failed');
+        if (!nextStatus) {
+          // Clear entry
+          if (existing && existing.id) {
+            const delRes = await fetch(`/api/call_meeting_tracker/${existing.id}`, { method: 'DELETE' });
+            if (!delRes.ok) throw new Error('Delete failed');
+          }
         } else {
-          const addRes = await fetch('/api/call_meeting_tracker', {
+          // Save / update entry
+          const res = await fetch('/api/call_meeting_tracker', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              name,
-              date_of_admission: admissionDate,
-              day,
-              month,
-              year,
-              type: 'Meeting',
-              status: 'Meeting',
+              name, date_of_admission: admissionDate,
+              day, month, year,
+              type: nextStatus, status: nextStatus,
             }),
           });
-          if (!addRes.ok) throw new Error('Save failed');
+          if (!res.ok) throw new Error('Save failed');
         }
         await loadCallMeetingData();
       } catch (err) {
-        console.error('Toggle call/meeting failed', err);
+        console.error('CM cycle failed', err);
         showSuccessModal('Could not update entry. Please try again.', true);
       }
     };
@@ -9986,10 +10005,19 @@
 
         <div class="mt-4 flex flex-wrap gap-4 text-xs font-semibold text-gray-600 justify-end">
           <div class="flex items-center gap-1.5">
-            <div class="w-4 h-4 rounded-full bg-teal-100 border border-teal-500 flex items-center justify-center">
-              <i class="fas fa-check text-teal-700 text-[10px]"></i>
-            </div>
-            Click a date cell to add/remove a meeting/call (tick)
+            <div class="w-5 h-5 rounded bg-teal-100 border border-teal-500 flex items-center justify-center text-teal-800 font-bold text-[10px]">M</div>
+            Meeting
+          </div>
+          <div class="flex items-center gap-1.5">
+            <div class="w-5 h-5 rounded bg-blue-100 border border-blue-400 flex items-center justify-center text-blue-800 font-bold text-[10px]">C</div>
+            Call
+          </div>
+          <div class="flex items-center gap-1.5">
+            <div class="w-5 h-5 rounded bg-purple-100 border border-purple-400 flex items-center justify-center text-purple-800 font-bold text-[10px]">VN</div>
+            Voice Note
+          </div>
+          <div class="flex items-center gap-1.5 text-gray-400">
+            Click cell to cycle: Meeting → Call → VN → Clear
           </div>
         </div>
       </div>
@@ -11809,8 +11837,9 @@
           <div>
             <label class="block text-sm font-bold text-gray-700 mb-1">Type</label>
             <select id="cm-status" class="w-full border p-2 rounded" required>
-              <option value="Meeting">Meeting (Tick)</option>
-              <option value="Call">Call (Cross)</option>
+              <option value="Meeting">Meeting (M)</option>
+              <option value="Call">Call (C)</option>
+              <option value="VN">Voice Note (VN)</option>
             </select>
           </div>
         </div>
