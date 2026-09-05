@@ -2636,7 +2636,13 @@
             .split('T')[0];
           datePicker.value = localIso;
         }
-        loadDailyReport();
+        // Skip reload while an Admin is mid-edit on a column label.
+        // _editingLayout is set by markLayoutDirty() and cleared by saveLayoutConfig().
+        // Without this guard, navigating away and back would re-fetch from DB and
+        // wipe the unsaved edit before the 800ms autosave debounce fires.
+        if (!_editingLayout) {
+          loadDailyReport();
+        }
       }
       if (viewId === 'psych-sessions-view') {
         initPsychSessionsView();
@@ -7573,6 +7579,9 @@
 
     let DAY_CONFIG = [...DEFAULT_DAY_CONFIG];
     let NIGHT_CONFIG = [...DEFAULT_NIGHT_CONFIG];
+    // Flag: true while an Admin has an unsaved column-label edit in progress.
+    // Used to prevent loadDailyReport() from wiping in-progress edits on view navigation.
+    let _editingLayout = false;
 
     const escapeHtml = (str = '') =>
       String(str)
@@ -8145,6 +8154,8 @@
     };
 
     function markLayoutDirty() {
+      // Mark that an edit is in progress so loadDailyReport() won't wipe it mid-edit
+      _editingLayout = true;
       const btn = document.getElementById('btn-save-layout');
       if (btn) {
         btn.classList.add('bg-yellow-500', 'animate-pulse');
@@ -8177,7 +8188,10 @@
       const newNightConfig = scrapeHeaders('night');
 
       // Don't save if nothing was scraped (table not rendered yet)
-      if (!newDayConfig.length && !newNightConfig.length) return;
+      if (!newDayConfig.length && !newNightConfig.length) {
+        _editingLayout = false;
+        return;
+      }
 
       const btn = document.getElementById('btn-save-layout');
       // Show saving indicator
@@ -8194,9 +8208,28 @@
         });
 
         if (res.ok) {
-          // Update local state immediately
-          DAY_CONFIG = newDayConfig;
-          NIGHT_CONFIG = newNightConfig;
+          // Re-fetch the merged config from the server so our local state reflects
+          // what is actually stored (including any edits another user may have made
+          // to other columns while we were editing). This prevents the next
+          // loadDailyReport() call from reverting our change.
+          try {
+            const freshRes = await fetch('/api/reports/config');
+            if (freshRes.ok) {
+              const freshConfig = await freshRes.json();
+              DAY_CONFIG = mergeWithDefaults(freshConfig.day_columns, DEFAULT_DAY_CONFIG, DAY_COLUMN_ORDER);
+              NIGHT_CONFIG = mergeWithDefaults(freshConfig.night_columns, DEFAULT_NIGHT_CONFIG, NIGHT_COLUMN_ORDER);
+              DAY_CONFIG = DAY_CONFIG.filter((c) => DAY_COLUMN_ORDER.includes(c.key));
+              NIGHT_CONFIG = NIGHT_CONFIG.filter((c) => NIGHT_COLUMN_ORDER.includes(c.key));
+            } else {
+              // Fallback: use what we scraped from the DOM
+              DAY_CONFIG = newDayConfig;
+              NIGHT_CONFIG = newNightConfig;
+            }
+          } catch (_) {
+            DAY_CONFIG = newDayConfig;
+            NIGHT_CONFIG = newNightConfig;
+          }
+
           if (btn) {
             btn.classList.remove('bg-yellow-500', 'animate-pulse');
             btn.classList.add('bg-gray-800');
@@ -8207,6 +8240,9 @@
         }
       } catch (e) {
         if (!silent) showSuccessModal('Error saving layout', true);
+      } finally {
+        // Edit is complete (saved or failed) — allow loadDailyReport to run normally again
+        _editingLayout = false;
       }
     }
 

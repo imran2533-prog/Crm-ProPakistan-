@@ -3651,16 +3651,52 @@ def save_report_config():
     if not check_db(): return jsonify({"error": "Database error"}), 500
     data = clean_input_data(request.json)
     try:
-        # Strip slot_bp from saved columns — it's always injected from code defaults
+        BP_KEYS = {'slot_bp', 'slot_bp2'}
+
         def strip_bp(cols):
+            """Remove BP-only columns — they are injected from code defaults, never stored."""
             if not cols: return cols
-            return [c for c in cols if c.get('key') != 'slot_bp']
+            return [c for c in cols if c.get('key') not in BP_KEYS]
+
+        # --- Field-level merge (prevents one user's stale DOM overwriting another's edits) ---
+        # Strategy: read the current document from DB, then overwrite only the keys
+        # that were actually sent in this request. Unknown/untouched keys are preserved.
+        existing = mongo.db.report_config.find_one({'_id': 'main_config'}) or {}
+
+        def merge_cols(existing_list, incoming_list):
+            """Merge incoming labels into the existing list, keyed by 'key' field.
+            Columns not present in incoming_list are left unchanged."""
+            if not incoming_list:
+                return existing_list  # nothing to change
+            # Build a map of existing columns for O(1) lookup
+            existing_map = {c['key']: c for c in (existing_list or [])}
+            # Overwrite only the keys that appear in the incoming payload
+            for col in strip_bp(incoming_list):
+                k = col.get('key')
+                if k:
+                    existing_map[k] = col  # update label in place
+            # Return as an ordered list, preserving original order + appending new keys
+            seen = set()
+            merged = []
+            for c in (existing_list or []):
+                k = c['key']
+                merged.append(existing_map[k])
+                seen.add(k)
+            for col in strip_bp(incoming_list):
+                k = col.get('key')
+                if k and k not in seen:
+                    merged.append(col)
+                    seen.add(k)
+            return merged
+
+        new_day   = merge_cols(existing.get('day_columns'),   data.get('day_columns'))
+        new_night = merge_cols(existing.get('night_columns'), data.get('night_columns'))
 
         mongo.db.report_config.update_one(
             {'_id': 'main_config'},
             {'$set': {
-                'day_columns': strip_bp(data.get('day_columns')),
-                'night_columns': strip_bp(data.get('night_columns'))
+                'day_columns':   new_day,
+                'night_columns': new_night,
             }},
             upsert=True
         )
