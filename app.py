@@ -22,22 +22,37 @@ from apscheduler.schedulers.background import BackgroundScheduler
 import atexit
 load_dotenv()
 
+# Detect serverless environment early — used throughout the file to skip
+# features that require persistent processes (SocketIO rooms, scheduler, etc.)
+IS_VERCEL = bool(os.environ.get("VERCEL") or os.environ.get("VERCEL_ENV"))
+
 app = Flask(__name__)
 CORS(app)
-Compress(app)  # Gzip compression — reduces 518KB HTML to ~80KB
+
+# Flask-Compress: gzip compression — skip on Vercel (serverless handles encoding
+# at the CDN layer; initialising it here causes response-wrapping errors)
+if not IS_VERCEL:
+    Compress(app)
+
 # Talisman disabled — causes recursion errors with eventlet on Render
 # Talisman(app, content_security_policy=None)
+
+# Flask-Limiter: on Vercel every cold-start is a fresh process so memory://
+# storage resets per request. Disable rate-limiting on Vercel to avoid
+# spurious 429s on the very first request after a cold start.
 limiter = Limiter(
     get_remote_address,
     app=app,
-    default_limits=["2000 per day", "500 per hour"],
+    default_limits=[] if IS_VERCEL else ["2000 per day", "500 per hour"],
     storage_uri="memory://",
+    enabled=not IS_VERCEL,
 )
 
 # --- REAL-TIME NOTIFICATIONS (Socket.IO) ---
-# NOTE: Requires a single worker process (see render.yaml: `-w 1`) since rooms
-# are tracked in-memory. For multi-instance scaling, a message_queue (e.g. Redis)
-# would need to be configured here.
+# Socket.IO requires a persistent process with in-memory rooms.
+# On Vercel (serverless) we initialise SocketIO so imports don't break,
+# but all emit() calls are guarded with IS_VERCEL checks — notifications
+# are delivered via DB polling instead (already implemented in the frontend).
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading", manage_session=True)
 
 # --- CONFIGURATION ---
@@ -268,7 +283,9 @@ def create_notification(title, message, notif_type='info', target_roles=None, ta
     rooms = set([f"role:{r}" for r in target_roles] + [f"user:{uid}" for uid in target_user_ids])
     for room in rooms:
         try:
-            socketio.emit('notification', payload, room=room)
+            # Skip Socket.IO push on Vercel — frontend polls notifications via REST API
+            if not IS_VERCEL:
+                socketio.emit('notification', payload, room=room)
         except Exception as e:
             print(f"Socket emit error ({room}): {e}")
     return payload
