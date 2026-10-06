@@ -6928,8 +6928,31 @@
     let psychNoteSessionId = '';
 
     async function initPsychSessionsView() {
+      // Always reset to the Individual tab on every navigation.
+      // Without this, switching to "Group Therapy" tab then navigating away
+      // and back would leave psych-tab-group visible on unrelated pages.
+      const tabIndividual = document.getElementById('psych-tab-individual');
+      const tabGroup      = document.getElementById('psych-tab-group');
+      const tabBtnInd     = document.getElementById('tab-btn-individual');
+      const tabBtnGrp     = document.getElementById('tab-btn-group');
+      if (tabIndividual) tabIndividual.classList.remove('hidden');
+      if (tabGroup)      tabGroup.classList.add('hidden');
+      if (tabBtnInd) tabBtnInd.className = 'px-4 py-2 text-sm font-bold rounded-t-lg border-b-2 border-teal-600 text-teal-700 bg-teal-50';
+      if (tabBtnGrp) tabBtnGrp.className = 'px-4 py-2 text-sm font-bold rounded-t-lg border-b-2 border-transparent text-gray-500 hover:text-teal-600';
+
+      // Use classList instead of style.display so it cooperates with Tailwind's
+      // hidden utility — style.display='block' would override hidden class and
+      // cause the card to bleed through onto other views.
       const assignCard = document.getElementById('psych-assign-card');
-      if (assignCard) assignCard.style.display = currentUser.role === 'Admin' ? 'block' : 'none';
+      if (assignCard) {
+        if (currentUser.role === 'Admin') {
+          assignCard.classList.remove('hidden');
+          assignCard.style.display = '';   // clear any leftover inline style
+        } else {
+          assignCard.classList.add('hidden');
+          assignCard.style.display = '';
+        }
+      }
 
       const start = document.getElementById('psych-filter-start');
       const end = document.getElementById('psych-filter-end');
